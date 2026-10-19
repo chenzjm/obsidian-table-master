@@ -10,6 +10,8 @@ All-in-one Markdown table workflow for Obsidian. Combines the most useful pieces
 
 > Table Extended uses the same parser hook for source rendering. Running both plugins together is **not supported**: Table Master will warn you on load and you should disable the others.
 
+> **Maintenance fork**: this repository is maintained independently by [@chenzjm](https://github.com/chenzjm), based on upstream [moranrs/table-master](https://github.com/moranrs/table-master) v0.2.1 (MIT). The first addition in this fork is **selection-aware range paste** — see feature 7.
+
 ## Features
 
 ### 1. Floating toolbar
@@ -80,9 +82,22 @@ Copy a range from Excel, Google Sheets, Numbers, or any web page that contains a
 
 - Excel / web pages: the rich `text/html` clipboard payload is parsed; `colspan` / `rowspan` are preserved and translated to MultiMarkdown placeholders.
 - Plain TSV: tab-separated text is parsed as a fallback (Excel always provides this).
-- If the cursor is currently inside a table, the import **replaces** that table; otherwise the new table is inserted at the cursor.
+- No selection: if the cursor is inside a table, the import **replaces** that table; otherwise a new table is inserted at the cursor.
 - Pipes inside imported cells are escaped automatically so the markdown round-trips cleanly.
 - Multi-line cells (Excel `Alt+Enter`, `<br>` in HTML, `<p>`/`<div>`/`<li>` blocks) are emitted as a single GFM row with `<br>` between segments. Reading view + Live Preview both upgrade those `<br>` tokens to real line breaks, so a multi-line cell still wraps visually while merge structure (`rowspan`/`colspan`) stays intact.
+
+**Selection-aware range paste** (new in this fork): select a rectangle of cells inside a table before running the command, and the clipboard block is pasted into that region only, WPS/Excel-style:
+
+| Situation | Behaviour |
+| --- | --- |
+| Clipboard block fits inside the selection | Overwrites the top-left part of the selection only; the rest is untouched |
+| Clipboard larger than selection — single-cell selection | Silently expands the table (rows / columns appended at the bottom / right edge) |
+| Clipboard larger than selection — multi-cell selection | Asks for confirmation, then pastes anchored at the selection's top-left and expands |
+| Selection crosses tables / leaves the table / covers the separator or caption line | Blocked with a notice |
+| Merged cell fully inside the pasted region | Flattened automatically, then overwritten |
+| Merged cell partially overlapping the region | Blocked (like Excel's "cannot change part of a merged cell") |
+
+The header row can be pasted into; after pasting the cursor lands on the region's top-left cell, and the whole paste is a single undo step.
 
 ## Installation
 
@@ -173,5 +188,7 @@ Inspired by:
 - [Advanced Tables](https://github.com/tgrosinger/advanced-tables-obsidian) by Tony Grosinger
 - [Markdown Table Editor](https://github.com/vanadium23/obsidian-markdown-table-editor) by Ivan Tikhonov
 - [Table Extended](https://github.com/zhouhua/obsidian-table-extended) by Zhou Hua
+
+Upstream source of this fork: [table-master](https://github.com/moranrs/table-master) by moranrs — this repository starts from its v0.2.1 source tree.
 
 All three are MIT-licensed; this plugin is also MIT.

@@ -10,6 +10,8 @@
 
 > Table Master 与 Table Extended 使用同一套源文件解析约定，**两者不可同时启用**。检测到 Table Extended 启用时会弹 8 秒提醒，请手动禁用其它表格插件以获得最佳体验。
 
+> **维护分支**：本仓库由 [@chenzjm](https://github.com/chenzjm) 独立维护，基线取自上游 [moranrs/table-master](https://github.com/moranrs/table-master) v0.2.1（MIT）。本分支新增的第一个功能是 **选区感知的范围粘贴** —— 见功能 7。
+
 ## 功能
 
 ### 1. 浮动工具栏
@@ -80,9 +82,22 @@ Live Preview 采用轻量方式仅修改 `rowspan` / `colspan` 属性并隐藏�
 
 - Excel / 网页：会优先读取剪贴板中的 `text/html`，`colspan` / `rowspan` 会被转为 MultiMarkdown 占位符。
 - 纯文本：退化为 TSV（制表符分隔）解析，Excel 总会同时写入这种格式。
-- 如果当前光标在某张表格中，导入会 **替换** 该表格；否则在光标处插入新表。
+- 无选区时：光标在表格内则 **替换** 该表格；否则在光标处插入新表。
 - 单元格内的 `|` 会被自动转义，保证生成的 markdown 可以原样反解析。
 - 多行单元格（Excel 的 `Alt+Enter`、HTML 中的 `<br>`、`<p>`/`<div>`/`<li>` 等）会以 `<br>` 拼接的方式写在一行 GFM 单元格内。阅读视图与 Live Preview 都会把字面 `<br>` 自动升级为真正的换行元素——单元格视觉上仍是多行，同时合并属性（`rowspan` / `colspan`）的渲染不会错位。
+
+**选区感知的范围粘贴**（本分支新增）：先在表格内框选一片单元格区域再执行命令，剪贴板内容只会贴入选区，行为对齐 WPS/Excel 的区域粘贴：
+
+| 场景 | 行为 |
+| --- | --- |
+| 剪贴板不大于选区 | 只覆盖选区左上角对应部分，其余选区原样保留 |
+| 剪贴板大于选区（单格选区） | 静默扩表（在表格末尾按需补行 / 补列） |
+| 剪贴板大于选区（多格选区） | 弹窗确认后从选区左上角贴入并扩表 |
+| 选区跨表 / 出表 / 覆盖表头分隔行或标题行 | Notice 拦截提示 |
+| 合并单元格被贴入区域完整覆盖 | 自动摊平后覆盖 |
+| 合并单元格与区域部分重叠 | 拦截（同 Excel「无法更改合并单元格的一部分」） |
+
+表头行可以被贴入；粘贴后光标落在区域左上角单元格，整个粘贴是单步撤销。
 
 ## 安装
 
@@ -173,5 +188,7 @@ src/
 - [Advanced Tables](https://github.com/tgrosinger/advanced-tables-obsidian) by Tony Grosinger
 - [Markdown Table Editor](https://github.com/vanadium23/obsidian-markdown-table-editor) by Ivan Tikhonov
 - [Table Extended](https://github.com/zhouhua/obsidian-table-extended) by Zhou Hua
+
+本分支的上游源码：[table-master](https://github.com/moranrs/table-master) by moranrs —— 本仓库基于其 v0.2.1 源码树建立。
 
 三者均为 MIT 协议；本插件同样采用 MIT。

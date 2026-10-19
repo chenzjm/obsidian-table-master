@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS, TableMasterSettings, TableMasterSettingTab } from "./
 import { setLanguage, t } from "./i18n";
 import * as actions from "./editor/actions";
 import { getActionContext } from "./editor/contextHelper";
-import { locateTable } from "./editor/tableLocator";
+import { locateTable, getSelectionRectIn, type SelectionRect } from "./editor/tableLocator";
 import { parseTable } from "./table/parser";
 import { serialize } from "./table/serializer";
 import { navigateCell, navigateRowEnter } from "./editor/cellNavigator";
@@ -146,6 +146,14 @@ export default class TableMasterPlugin extends Plugin {
 
     // Commands
     this.registerCommands();
+
+    // Cmd/Ctrl+V range paste: when the selection is a clean rectangle of
+    // cells inside a table and the clipboard carries a table (Excel / web),
+    // intercept the paste and overwrite just that region. Every other paste
+    // is left to the default behaviour.
+    this.registerEvent(
+      this.app.workspace.on("editor-paste", (evt, editor) => this.handleEditorPaste(evt, editor)),
+    );
 
     // Settings tab
     this.addSettingTab(new TableMasterSettingTab(this.app, this));
@@ -319,6 +327,11 @@ export default class TableMasterPlugin extends Plugin {
       new Notice(t("notice.importFailed"));
       return;
     }
+    this.notifyImportResult(result);
+  }
+
+  /** Shared notice mapping for clipboard import outcomes. */
+  private notifyImportResult(result: actions.ClipboardImportResult): void {
     const srcLabel = (s: "html" | "tsv") => (s === "html" ? "HTML" : "TSV");
     switch (result.kind) {
       case "failed":
@@ -349,6 +362,49 @@ export default class TableMasterPlugin extends Plugin {
         new Notice(t("notice.importDone", { source: srcLabel(result.source) }));
         return;
     }
+  }
+
+  /**
+   * Cmd/Ctrl+V interception. Takes over the native paste only when BOTH
+   * conditions hold:
+   *   1. the editor selection is a clean rectangle of data cells inside a
+   *      single table, and
+   *   2. the clipboard carries a table (rich HTML or TSV, e.g. copied from
+   *      Excel / a web page).
+   * In every other case (no selection, selection outside any table, plain
+   * text clipboard, …) the default paste is left untouched.
+   */
+  private handleEditorPaste(evt: ClipboardEvent, editor: Editor): void {
+    let sel: SelectionRect;
+    try {
+      sel = getSelectionRectIn(editor, editor.getCursor("from"), editor.getCursor("to"));
+    } catch {
+      return; // selection geometry unreadable → default paste
+    }
+    if (sel.kind !== "rect") return;
+
+    const data = evt.clipboardData;
+    if (!data) return;
+    const payload: actions.ClipboardPayload = {
+      html: data.getData("text/html") || undefined,
+      text: data.getData("text/plain") || undefined,
+    };
+    const parsed = actions.parseClipboardModel(payload);
+    if (!parsed) return; // not a table → default paste
+
+    // Both conditions met: this is a range paste. Suppress the default
+    // text paste and run the selection-aware flow instead (it may still
+    // open the expand-confirmation dialog asynchronously).
+    evt.preventDefault();
+    const ctx: actions.ActionContext = {
+      app: this.app,
+      editor,
+      format: this.settings.outputFormat,
+    };
+    void actions
+      .pasteModelIntoSelection(ctx, parsed.model, parsed.source, sel)
+      .then((result) => this.notifyImportResult(result))
+      .catch(() => new Notice(t("notice.importFailed")));
   }
 
   /**

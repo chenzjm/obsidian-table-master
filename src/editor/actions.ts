@@ -3,7 +3,7 @@
 // to the editor and restores cursor at the appropriate position.
 
 import { App, Editor, Notice } from "obsidian";
-import { locateTable, getSelectionRectIn, TableLocation } from "./tableLocator";
+import { locateTable, getSelectionRectIn, TableLocation, type SelectionRect } from "./tableLocator";
 import { isSeparatorLine, parseTable } from "../table/parser";
 import { serialize, OutputFormat } from "../table/serializer";
 import { TableModel, anchorOf, emptyModel } from "../table/model";
@@ -405,17 +405,8 @@ export async function importTableFromClipboard(ctx: ActionContext): Promise<Clip
   const payload = await readClipboardPayload();
   if (!payload) return { kind: "failed" };
 
-  let clip: TableModel | null = null;
-  let source: "html" | "tsv" = "tsv";
-  if (payload.html) {
-    clip = importHtmlTable(payload.html);
-    if (clip) source = "html";
-  }
-  if (!clip && payload.text) {
-    clip = importTsvTable(payload.text);
-    if (clip) source = "tsv";
-  }
-  if (!clip) return { kind: "noTable" };
+  const parsed = parseClipboardModel(payload);
+  if (!parsed) return { kind: "noTable" };
 
   // --- Selection-aware range paste -------------------------------------
   const from = ctx.editor.getCursor("from");
@@ -425,48 +416,87 @@ export async function importTableFromClipboard(ctx: ActionContext): Promise<Clip
   if (sel.kind === "invalid") return { kind: "blocked", reason: "invalidLine" };
 
   if (sel.kind === "rect") {
-    const loc = locateTable(ctx.editor, from);
-    if (!loc) return { kind: "blocked", reason: "crossTable" };
-    let target: TableModel;
-    try {
-      target = parseTable(loc.text).model;
-    } catch {
-      return { kind: "blocked", reason: "crossTable" };
-    }
-
-    const selRows = sel.bottom - sel.top + 1;
-    const selCols = sel.right - sel.left + 1;
-    const expands = clip.rows.length > selRows || clip.cols > selCols;
-    const multiCell = selRows > 1 || selCols > 1;
-    // WPS behaviour: a single-cell target expands silently (like typing), a
-    // multi-cell target asks first because cells outside the selection are
-    // about to be overwritten.
-    if (expands && multiCell) {
-      const ok = await confirmExpandPaste(ctx, selRows, selCols, clip.rows.length, clip.cols);
-      if (!ok) return { kind: "cancelled" };
-    }
-
-    const out = ops.pasteRange(target, clip, sel.top, sel.left);
-    if (!out) return { kind: "blocked", reason: "partialMerge" };
-    applyModel(ctx, loc, out.model, { row: sel.top, col: sel.left });
-    return {
-      kind: "pasted",
-      source,
-      rows: out.rows,
-      cols: out.cols,
-      rowsAdded: out.rowsAdded,
-      colsAdded: out.colsAdded,
-    };
+    return pasteModelIntoSelection(ctx, parsed.model, parsed.source, sel);
   }
 
   // --- No (usable) selection: original behaviour ------------------------
   const loc = locateTable(ctx.editor);
   if (loc) {
-    applyModel(ctx, loc, clip, { row: 0, col: 0 });
-    return { kind: "replaced", source };
+    applyModel(ctx, loc, parsed.model, { row: 0, col: 0 });
+    return { kind: "replaced", source: parsed.source };
   }
-  insertModelAtCursor(ctx, clip);
-  return { kind: "inserted", source };
+  insertModelAtCursor(ctx, parsed.model);
+  return { kind: "inserted", source: parsed.source };
+}
+
+/** Clipboard payload accepted by {@link parseClipboardModel}. */
+export interface ClipboardPayload {
+  html?: string;
+  text?: string;
+}
+
+/**
+ * Turn a raw clipboard payload (rich HTML and/or plain TSV) into a table
+ * model. HTML wins when both are present (it preserves merges); TSV is the
+ * fallback Excel always provides. Returns null when nothing table-shaped.
+ */
+export function parseClipboardModel(
+  payload: ClipboardPayload,
+): { model: TableModel; source: "html" | "tsv" } | null {
+  if (payload.html) {
+    const model = importHtmlTable(payload.html);
+    if (model) return { model, source: "html" };
+  }
+  if (payload.text) {
+    const model = importTsvTable(payload.text);
+    if (model) return { model, source: "tsv" };
+  }
+  return null;
+}
+
+/**
+ * Paste an already-parsed clipboard model into a validated selection
+ * rectangle (shared by the "Paste table from clipboard" command and the
+ * Cmd/Ctrl+V editor-paste interception).
+ */
+export async function pasteModelIntoSelection(
+  ctx: ActionContext,
+  clip: TableModel,
+  source: "html" | "tsv",
+  sel: Extract<SelectionRect, { kind: "rect" }>,
+): Promise<ClipboardImportResult> {
+  const loc = locateTable(ctx.editor, ctx.editor.getCursor("from"));
+  if (!loc) return { kind: "blocked", reason: "crossTable" };
+  let target: TableModel;
+  try {
+    target = parseTable(loc.text).model;
+  } catch {
+    return { kind: "blocked", reason: "crossTable" };
+  }
+
+  const selRows = sel.bottom - sel.top + 1;
+  const selCols = sel.right - sel.left + 1;
+  const expands = clip.rows.length > selRows || clip.cols > selCols;
+  const multiCell = selRows > 1 || selCols > 1;
+  // WPS behaviour: a single-cell target expands silently (like typing), a
+  // multi-cell target asks first because cells outside the selection are
+  // about to be overwritten.
+  if (expands && multiCell) {
+    const ok = await confirmExpandPaste(ctx, selRows, selCols, clip.rows.length, clip.cols);
+    if (!ok) return { kind: "cancelled" };
+  }
+
+  const out = ops.pasteRange(target, clip, sel.top, sel.left);
+  if (!out) return { kind: "blocked", reason: "partialMerge" };
+  applyModel(ctx, loc, out.model, { row: sel.top, col: sel.left });
+  return {
+    kind: "pasted",
+    source,
+    rows: out.rows,
+    cols: out.cols,
+    rowsAdded: out.rowsAdded,
+    colsAdded: out.colsAdded,
+  };
 }
 
 /** Ask the user to confirm pasting a block larger than the selection. */
@@ -489,11 +519,6 @@ async function confirmExpandPaste(
     }),
     t("modal.pasteExpandOk"),
   );
-}
-
-interface ClipboardPayload {
-  html?: string;
-  text?: string;
 }
 
 async function readClipboardPayload(): Promise<ClipboardPayload | null> {

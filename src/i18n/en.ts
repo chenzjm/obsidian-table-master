@@ -93,9 +93,19 @@ export const en = {
     "Table Master detected conflicting plugins: {plugins}. Disable them for the best experience.",
   "notice.importNoTable": "Clipboard does not contain a recognizable table.",
   "notice.importDone": "Imported table from clipboard ({source}).",
+  "notice.importPasted": "Pasted {rows}×{cols} into the selection ({source}).",
+  "notice.importCancelled": "Paste cancelled.",
   "notice.importFailed": "Could not read clipboard. Try again or paste manually.",
+  "notice.selectionCrossTable": "Selection must stay inside a single table to paste into a region.",
+  "notice.selectionInvalidLine": "Selection covers the separator or caption line. Select a plain cell region instead.",
+  "notice.selectionPartialMerge": "Selection partially overlaps a merged cell. Cover it fully or avoid it.",
   "notice.copiedToClipboard": "Table copied to clipboard as Markdown.",
   "notice.copyFailed": "Could not write to clipboard.",
+
+  "modal.pasteExpandTitle": "Expand table",
+  "modal.pasteExpandBody":
+    "The clipboard table ({clipRows} rows × {clipCols} cols) is larger than the selection ({selRows} rows × {selCols} cols). It will be pasted from the selection's top-left, expanding the table as needed. Continue?",
+  "modal.pasteExpandOk": "Paste",
 
   // Settings
   "set.outputFormat": "Merged-cell output format",

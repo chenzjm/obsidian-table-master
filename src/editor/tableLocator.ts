@@ -19,11 +19,6 @@ export interface TableLocation {
   col: number;
 }
 
-function getLine(editor: Editor, n: number): string | null {
-  if (n < 0 || n >= editor.lineCount()) return null;
-  return editor.getLine(n);
-}
-
 export function isCaptionLine(line: string): boolean {
   return /^\s*\[[^\]]+\](?:\s*\[[^\]]+\])?\s*$/.test(line);
 }
@@ -152,25 +147,39 @@ export function findTableBlock(
 
 /** Returns the location, or null if the cursor isn't inside a recognizable table. */
 export function locateTable(editor: Editor, pos?: EditorPosition): TableLocation | null {
-  const cursor = pos ?? editor.getCursor();
-  const block = findTableBlock(
-    (n) => getLine(editor, n),
-    editor.lineCount(),
-    cursor.line,
-  );
+  return locateTableIn(editor, pos ?? editor.getCursor());
+}
+
+/**
+ * Minimal editor surface needed to locate tables. Obsidian's `Editor`
+ * satisfies this structurally, and tests can pass a plain mock.
+ */
+export interface LineSource {
+  getLine(n: number): string;
+  lineCount(): number;
+}
+
+/** Pure core of {@link locateTable}; takes the position explicitly. */
+export function locateTableIn(source: LineSource, pos: EditorPosition): TableLocation | null {
+  const cursor = pos;
+  const getLine = (n: number): string | null => {
+    if (n < 0 || n >= source.lineCount()) return null;
+    return source.getLine(n);
+  };
+  const block = findTableBlock(getLine, source.lineCount(), cursor.line);
   if (!block) return null;
   const { startLine: start, endLine: end } = block;
 
   const lines: string[] = [];
-  for (let i = start; i <= end; i++) lines.push(getLine(editor, i) ?? "");
+  for (let i = start; i <= end; i++) lines.push(getLine(i) ?? "");
 
   // Compute logical (row, col) for the cursor; skip captions, separators and blank lines.
-  const cursorLine = getLine(editor, cursor.line) ?? "";
+  const cursorLine = getLine(cursor.line) ?? "";
   let row = -1;
   if (!isSeparatorLine(cursorLine) && !isCaptionLine(cursorLine) && cursorLine.trim() !== "") {
     let logical = -1;
     for (let i = start; i <= cursor.line; i++) {
-      const line = getLine(editor, i) ?? "";
+      const line = getLine(i) ?? "";
       if (isSeparatorLine(line)) continue;
       if (isCaptionLine(line)) continue;
       if (line.trim() === "") continue;
@@ -189,6 +198,51 @@ export function locateTable(editor: Editor, pos?: EditorPosition): TableLocation
     text: lines.join("\n"),
     row,
     col,
+  };
+}
+
+/** Outcome of inspecting the editor selection for a range paste. */
+export type SelectionRect =
+  /** Collapsed cursor, or a selection that doesn't touch any table. */
+  | { kind: "none" }
+  /** Selection spans two tables or leaves the table on one end. */
+  | { kind: "cross" }
+  /** An endpoint sits on a separator / caption / blank line of the table block. */
+  | { kind: "invalid" }
+  /** A clean rectangle of data cells within a single table. */
+  | {
+      kind: "rect";
+      startLine: number;
+      endLine: number;
+      top: number;
+      bottom: number;
+      left: number;
+      right: number;
+    };
+
+/**
+ * Classify the selection from/to positions for range pasting. Pure function
+ * over line text so it is unit-testable without an Obsidian editor.
+ */
+export function getSelectionRectIn(
+  source: LineSource,
+  from: EditorPosition,
+  to: EditorPosition,
+): SelectionRect {
+  if (from.line === to.line && from.ch === to.ch) return { kind: "none" };
+  const a = locateTableIn(source, from);
+  const b = locateTableIn(source, to);
+  if (!a && !b) return { kind: "none" };
+  if (!a || !b || a.startLine !== b.startLine) return { kind: "cross" };
+  if (a.row < 0 || b.row < 0) return { kind: "invalid" };
+  return {
+    kind: "rect",
+    startLine: a.startLine,
+    endLine: a.endLine,
+    top: Math.min(a.row, b.row),
+    bottom: Math.max(a.row, b.row),
+    left: Math.min(a.col, b.col),
+    right: Math.max(a.col, b.col),
   };
 }
 

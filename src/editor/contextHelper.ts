@@ -9,6 +9,7 @@ export function getActionContext(app: App, plugin: TableMasterPlugin): ActionCon
   const view = app.workspace.getActiveViewOfType(MarkdownView);
   if (!view) return null;
   return {
+    app,
     editor: view.editor,
     format: plugin.settings.outputFormat,
   };

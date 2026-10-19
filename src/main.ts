@@ -312,22 +312,43 @@ export default class TableMasterPlugin extends Plugin {
       new Notice(t("notice.importFailed"));
       return;
     }
-    let result: Awaited<ReturnType<typeof actions.importTableFromClipboard>>;
+    let result: actions.ClipboardImportResult;
     try {
       result = await actions.importTableFromClipboard(ctx);
     } catch {
       new Notice(t("notice.importFailed"));
       return;
     }
-    if (!result) {
-      new Notice(t("notice.importNoTable"));
-      return;
+    const srcLabel = (s: "html" | "tsv") => (s === "html" ? "HTML" : "TSV");
+    switch (result.kind) {
+      case "failed":
+        new Notice(t("notice.importFailed"));
+        return;
+      case "noTable":
+        new Notice(t("notice.importNoTable"));
+        return;
+      case "cancelled":
+        new Notice(t("notice.importCancelled"));
+        return;
+      case "blocked":
+        if (result.reason === "crossTable") new Notice(t("notice.selectionCrossTable"));
+        else if (result.reason === "invalidLine") new Notice(t("notice.selectionInvalidLine"));
+        else new Notice(t("notice.selectionPartialMerge"));
+        return;
+      case "pasted":
+        new Notice(
+          t("notice.importPasted", {
+            rows: String(result.rows),
+            cols: String(result.cols),
+            source: srcLabel(result.source),
+          }),
+        );
+        return;
+      case "inserted":
+      case "replaced":
+        new Notice(t("notice.importDone", { source: srcLabel(result.source) }));
+        return;
     }
-    new Notice(
-      t("notice.importDone", {
-        source: result.source === "html" ? "HTML" : "TSV",
-      }),
-    );
   }
 
   /**

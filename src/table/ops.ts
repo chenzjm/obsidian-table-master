@@ -365,3 +365,82 @@ export function setCellText(model: TableModel, r: number, c: number, text: strin
   m.rows[a.r][a.c].raw = text;
   return m;
 }
+
+export interface PasteRangeOutcome {
+  model: TableModel;
+  /** Dimensions of the overwritten block (== clipboard dimensions). */
+  rows: number;
+  cols: number;
+  /** Rows/cols appended at the table's bottom/right edge to fit the block. */
+  rowsAdded: number;
+  colsAdded: number;
+}
+
+/**
+ * Overwrite the rectangular region anchored at (r, c) with the raw text grid
+ * of `clip` (WPS/Excel-style range paste). When the clipboard block extends
+ * beyond the table, rows/columns are appended at the bottom/right edge.
+ *
+ * Merged regions fully inside the target rectangle are flattened implicitly
+ * (every cell is rewritten as a plain anchor). A merged region that only
+ * partially overlaps the rectangle cannot be pasted over — returns null,
+ * mirroring Excel's "cannot change part of a merged cell".
+ */
+export function pasteRange(
+  model: TableModel,
+  clip: TableModel,
+  r: number,
+  c: number,
+): PasteRangeOutcome | null {
+  if (r < 0 || c < 0 || r >= model.rows.length || c >= model.cols) return null;
+  const clipRows = clip.rows.length;
+  const clipCols = clip.cols;
+  if (clipRows < 1 || clipCols < 1) return null;
+  const rEnd = r + clipRows - 1;
+  const cEnd = c + clipCols - 1;
+
+  // Reject partial overlap with merged regions inside the overwritten area.
+  // Only cells that already exist can carry merges; the appended area is blank.
+  const lastRow = Math.min(rEnd, model.rows.length - 1);
+  const lastCol = Math.min(cEnd, model.cols - 1);
+  for (let rr = r; rr <= lastRow; rr++) {
+    for (let cc = c; cc <= lastCol; cc++) {
+      const a = anchorOf(model, rr, cc);
+      const anchor = model.rows[a.r][a.c];
+      if (a.r < r || a.c < c || a.r + anchor.rowspan - 1 > rEnd || a.c + anchor.colspan - 1 > cEnd) {
+        return null; // merge crosses the region boundary
+      }
+    }
+  }
+
+  // Flatten the clipboard to a raw text grid. Clipboard imports carry plain
+  // cells; if a merged HTML cell sneaks in, its anchor holds the text and the
+  // placeholders paste as empty cells.
+  const grid: string[][] = [];
+  for (let i = 0; i < clipRows; i++) {
+    const row: string[] = [];
+    for (let j = 0; j < clipCols; j++) {
+      const cell = clip.rows[i]?.[j];
+      row.push(cell && cell.isAnchor ? cell.raw : "");
+    }
+    grid.push(row);
+  }
+
+  const m = cloneModel(model);
+  const rowsAdded = Math.max(0, rEnd - (m.rows.length - 1));
+  for (let i = 0; i < rowsAdded; i++) m.rows.push(blankRow(m.cols));
+  const colsAdded = Math.max(0, cEnd - (m.cols - 1));
+  for (let i = 0; i < colsAdded; i++) {
+    for (const row of m.rows) row.push(makeAnchor(""));
+    m.aligns.push("none");
+  }
+  m.cols += colsAdded;
+
+  for (let i = 0; i < clipRows; i++) {
+    for (let j = 0; j < clipCols; j++) {
+      m.rows[r + i][c + j] = makeAnchor(grid[i][j]);
+    }
+  }
+  recomputeSpans(m);
+  return { model: m, rows: clipRows, cols: clipCols, rowsAdded, colsAdded };
+}

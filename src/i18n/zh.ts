@@ -90,7 +90,17 @@ export const zh: Dict = {
     "Table Master 检测到冲突插件：{plugins}。建议禁用以获得最佳体验。",
   "notice.importNoTable": "剪贴板中未识别到表格。",
   "notice.importDone": "已从剪贴板导入表格（{source}）。",
+  "notice.importPasted": "已粘贴 {rows}×{cols} 到选区（{source}）。",
+  "notice.importCancelled": "已取消粘贴。",
   "notice.importFailed": "读取剪贴板失败，请重试或手动粘贴。",
+  "notice.selectionCrossTable": "选区必须完全位于同一表格内，无法执行选区粘贴。",
+  "notice.selectionInvalidLine": "选区覆盖了表头分隔行或标题行，请调整为纯单元格区域。",
+  "notice.selectionPartialMerge": "选区与合并单元格部分重叠，请完整覆盖或避开合并单元格。",
+
+  "modal.pasteExpandTitle": "扩展表格",
+  "modal.pasteExpandBody":
+    "剪贴板表格（{clipRows} 行 × {clipCols} 列）大于选区（{selRows} 行 × {selCols} 列），将从选区左上角粘贴并按需扩展表格。是否继续？",
+  "modal.pasteExpandOk": "粘贴",
   "notice.copiedToClipboard": "表格 Markdown 已复制到剪贴板。",
   "notice.copyFailed": "无法写入剪贴板。",
 

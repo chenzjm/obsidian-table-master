@@ -383,14 +383,15 @@ export default class TableMasterPlugin extends Plugin {
   }
 
   /**
-   * Cmd/Ctrl+V interception. Takes over the native paste only when BOTH
-   * conditions hold:
-   *   1. the editor selection is a clean rectangle of data cells inside a
-   *      single table, and
-   *   2. the clipboard carries a table (rich HTML or TSV, e.g. copied from
-   *      Excel / a web page).
-   * In every other case (no selection, selection outside any table, plain
-   * text clipboard, …) the default paste is left untouched.
+   * Cmd/Ctrl+V interception. Takes over the native paste when the clipboard
+   * carries a table (rich HTML or TSV, e.g. copied from Excel / a web page)
+   * AND the selection state is unambiguous:
+   *   - rectangle of data cells inside one table → range paste;
+   *   - no selection at all → the command-style import (cursor inside a
+   *     table replaces it, otherwise a new table is inserted at the cursor)
+   *     — Obsidian's default HTML paste would mangle the table.
+   * Selections that cross tables or cover structural lines are ambiguous
+   * and left to the default paste. Plain-text clipboards always default.
    */
   private handleEditorPaste(evt: ClipboardEvent, editor: Editor): void {
     let sel: SelectionRect;
@@ -399,7 +400,7 @@ export default class TableMasterPlugin extends Plugin {
     } catch {
       return; // selection geometry unreadable → default paste
     }
-    if (sel.kind !== "rect") return;
+    if (sel.kind === "cross" || sel.kind === "invalid") return;
 
     const data = evt.clipboardData;
     if (!data) return;
@@ -410,19 +411,27 @@ export default class TableMasterPlugin extends Plugin {
     const parsed = actions.parseClipboardModel(payload);
     if (!parsed) return; // not a table → default paste
 
-    // Both conditions met: this is a range paste. Suppress the default
-    // text paste and run the selection-aware flow instead (it may still
-    // open the expand-confirmation dialog asynchronously).
+    // This is a table paste; suppress Obsidian's mangling default.
     evt.preventDefault();
     const ctx: actions.ActionContext = {
       app: this.app,
       editor,
       format: this.settings.outputFormat,
     };
-    void actions
-      .pasteModelIntoSelection(ctx, parsed.model, parsed.source, sel)
-      .then((result) => this.notifyImportResult(result))
-      .catch(() => new Notice(t("notice.importFailed")));
+    if (sel.kind === "rect") {
+      void actions
+        .pasteModelIntoSelection(ctx, parsed.model, parsed.source, sel)
+        .then((result) => this.notifyImportResult(result))
+        .catch(() => new Notice(t("notice.importFailed")));
+      return;
+    }
+    // No selection: command-style import (replace table / insert new one).
+    try {
+      const result = actions.importModelNoSelection(ctx, parsed.model, parsed.source);
+      this.notifyImportResult(result);
+    } catch {
+      new Notice(t("notice.importFailed"));
+    }
   }
 
   /**

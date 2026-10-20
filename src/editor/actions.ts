@@ -365,9 +365,9 @@ export function insertNewTable(ctx: ActionContext, rows: number, cols: number, h
 }
 
 /** Serialize an arbitrary model and drop it at the cursor. */
-export function insertModelAtCursor(ctx: ActionContext, model: TableModel): void {
+export function insertModelAtCursor(ctx: ActionContext, model: TableModel, pos?: { line: number; ch: number }): void {
   const text = serialize(model, ctx.format);
-  const cursor = ctx.editor.getCursor();
+  const cursor = pos ?? ctx.editor.getCursor();
   const line = ctx.editor.getLine(cursor.line) ?? "";
   // Ensure the new table starts on its own line.
   const prefix = line.trim() === "" ? "" : "\n";
@@ -420,13 +420,34 @@ export async function importTableFromClipboard(ctx: ActionContext): Promise<Clip
   }
 
   // --- No (usable) selection: original behaviour ------------------------
+  return importModelNoSelection(ctx, parsed.model, parsed.source);
+}
+
+/**
+ * No-selection clipboard import, shared by the command path and the
+ * Cmd/Ctrl+V interception: cursor inside a table replaces that table,
+ * cursor elsewhere inserts the clipboard table at the cursor. This is
+ * strictly better than Obsidian's default HTML paste, which mangles
+ * spreadsheet tables into escaped pipe soup.
+ */
+export function importModelNoSelection(
+  ctx: ActionContext,
+  model: TableModel,
+  source: "html" | "tsv",
+): ClipboardImportResult {
   const loc = locateTable(ctx.editor);
   if (loc) {
-    applyModel(ctx, loc, parsed.model, { row: 0, col: 0 });
-    return { kind: "replaced", source: parsed.source };
+    applyModel(ctx, loc, model, { row: 0, col: 0 });
+    return { kind: "replaced", source };
   }
-  insertModelAtCursor(ctx, parsed.model);
-  return { kind: "inserted", source: parsed.source };
+  // Cursor mid-line (e.g. inside a sentence): insert the table after the
+  // line instead of splitting the text at the caret — pasting a table into
+  // "hello | world" at the pipe must not leave fragments behind the table.
+  const cursor = ctx.editor.getCursor();
+  const line = ctx.editor.getLine(cursor.line) ?? "";
+  const midLine = line.trim() !== "" && cursor.ch > 0 && cursor.ch < line.length;
+  insertModelAtCursor(ctx, model, midLine ? { line: cursor.line, ch: line.length } : undefined);
+  return { kind: "inserted", source };
 }
 
 /** Clipboard payload accepted by {@link parseClipboardModel}. */

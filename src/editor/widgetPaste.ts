@@ -17,6 +17,7 @@ import { locateTableIn, type TableLocation } from "./tableLocator";
 import {
   parseClipboardModel,
   pasteModelIntoSelection,
+  importModelNoSelection,
   type ClipboardPayload,
   type ClipboardImportResult,
   type ActionContext,
@@ -95,9 +96,6 @@ export function buildWidgetTablePasteExt(handlers: WidgetPasteHandlers) {
         // (and drop their stale cache too).
         const cached = this.cache.take();
         if (event.defaultPrevented) return;
-        if (!cached) return;
-        const table = cached.table as HTMLTableElement | null;
-        if (!(table instanceof HTMLTableElement) || !table.isConnected) return;
 
         const data = event.clipboardData;
         if (!data) return;
@@ -108,9 +106,38 @@ export function buildWidgetTablePasteExt(handlers: WidgetPasteHandlers) {
         const parsed = parseClipboardModel(payload);
         if (!parsed) return; // not a table → default paste
 
-        // Both conditions met: take over the paste.
+        if (cached) {
+          const table = cached.table as HTMLTableElement | null;
+          if (!(table instanceof HTMLTableElement) || !table.isConnected) return;
+          // Drag-selected region plus a table clipboard: range paste.
+          event.preventDefault();
+          void pasteIntoWidgetTable(this.view, table, cached.rect, parsed.model, parsed.source, handlers);
+          return;
+        }
+
+        // No drag-selection. If the paste target is a table cell the user
+        // is editing that cell — leave the default behaviour alone. (The
+        // default pastes the clipboard text into the cell, which is the
+        // least surprising outcome while cell-editing.)
+        const target = event.target as HTMLElement | null;
+        if (target?.closest?.("td, th")) return;
+
+        // Otherwise this is a plain table paste over the editor surface:
+        // take over before Obsidian's default HTML paste mangles the
+        // spreadsheet into escaped pipe soup, and run the command-style
+        // import (cursor inside a table replaces it, else insert at cursor).
+        const ctx = handlers.getActionContext(this.view);
+        if (!ctx) {
+          handlers.onFallbackError();
+          return;
+        }
         event.preventDefault();
-        void pasteIntoWidgetTable(this.view, table, cached.rect, parsed.model, parsed.source, handlers);
+        try {
+          const result = importModelNoSelection(ctx, parsed.model, parsed.source);
+          handlers.onResult(result);
+        } catch {
+          handlers.onFallbackError();
+        }
       }
 
       /** Resolve the current DOM selection into a cached table selection. */

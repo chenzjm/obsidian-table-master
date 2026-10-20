@@ -23,7 +23,7 @@ const DOC_LINES = [
 ];
 
 /** CM-line-height approximation for posAtDOM: line index * 100. */
-function makeView(doc: Document): { view: WidgetPasteView; root: HTMLElement } {
+function makeView(doc: Document, docLines: string[] = DOC_LINES): { view: WidgetPasteView; root: HTMLElement } {
   const root = doc.createElement("div");
   root.className = "cm-editor";
   doc.body.appendChild(root);
@@ -44,9 +44,9 @@ function makeView(doc: Document): { view: WidgetPasteView; root: HTMLElement } {
     state: {
       doc: {
         lineAt: (pos: number) => ({ number: Math.floor(pos / 100) + 1 }),
-        line: (n: number) => ({ text: DOC_LINES[n - 1] ?? "" }),
-        length: DOC_LINES.length * 100,
-        lines: DOC_LINES.length,
+        line: (n: number) => ({ text: docLines[n - 1] ?? "" }),
+        length: docLines.length * 100,
+        lines: docLines.length,
       },
     },
   };
@@ -126,6 +126,85 @@ function makeController(view: WidgetPasteView, editor: ReturnType<typeof makeEdi
 }
 
 const EXCEL_HTML = '<table><tr><td>X1</td><td>X2</td></tr><tr><td>Y1</td><td>Y2</td></tr></table>';
+
+describe("user report: multi-column selection, notice always says one column", () => {
+  it("3×3 drag-selection + 1-column clipboard → rect must be 3×3, paste covers the first column only, result rows=3 cols=1", async () => {
+    const doc = window.document;
+    doc.body.innerHTML = "";
+    const srcLines = [
+      "| H1 | H2 | H3 |",
+      "| --- | --- | --- |",
+      "| a | b | c |",
+      "| d | e | f |",
+      "| g | h | i |",
+      "",
+      "hello world",
+    ];
+    const { view, root } = makeView(doc, srcLines);
+    const lines = [
+      "| H1 | H2 | H3 |",
+      "| --- | --- | --- |",
+      "| a | b | c |",
+      "| d | e | f |",
+      "| g | h | i |",
+      "",
+      "hello world",
+    ].map(() => {
+      const el = doc.createElement("div");
+      el.className = "cm-line";
+      return el;
+    });
+    const table = doc.createElement("table");
+    table.innerHTML =
+      "<tr><th>H1</th><th>H2</th><th>H3</th></tr>" +
+      "<tr><td>a</td><td>b</td><td>c</td></tr>" +
+      "<tr><td>d</td><td>e</td><td>f</td></tr>" +
+      "<tr><td>g</td><td>h</td><td>i</td></tr>";
+    lines[2].appendChild(table);
+    lines.forEach((l) => root.appendChild(l));
+
+    const editor = makeEditor();
+    editor.lines = [
+      "| H1 | H2 | H3 |",
+      "| --- | --- | --- |",
+      "| a | b | c |",
+      "| d | e | f |",
+      "| g | h | i |",
+      "",
+      "hello world",
+    ];
+    const made = makeController(view, editor);
+
+    const tds = table.querySelectorAll("td, th");
+    const first = tds[3] as HTMLElement; // a (row1 col0)
+    const last = tds[11] as HTMLElement; // i (row3 col2)
+    // Drag a → i: a 3×3 selection.
+    const sel = window.getSelection();
+    const range = doc.createRange();
+    range.selectNodeContents(first.firstChild!);
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    sel?.extend(last.firstChild!, 1);
+    doc.dispatchEvent(new (window as unknown as { Event: typeof Event }).Event("selectionchange"));
+
+    // Clipboard holds a single 3-row column (like the user's 测试/测试1 tests).
+    const evt = doc.createEvent("Event");
+    evt.initEvent("paste", true, true);
+    Object.defineProperty(evt, "clipboardData", {
+      value: { getData: (t: string) => (t === "text/html" ? '<table><tr><td>P1</td></tr><tr><td>P2</td></tr><tr><td>P3</td></tr></table>' : "") },
+    });
+    (evt as unknown as { preventDefault(): void }).preventDefault = () => {};
+    doc.body.dispatchEvent(evt);
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(made.results[0]).toMatchObject({ kind: "pasted", rows: 3, cols: 1 });
+    const text = editor.text();
+    // Column 1 overwritten, columns 2–3 untouched (partial-overlap WPS rule).
+    expect(text).toMatch(/\|\s*P1\s*\|\s*b\s*\|\s*c\s*\|/);
+    expect(text).toMatch(/\|\s*P2\s*\|\s*e\s*\|\s*f\s*\|/);
+    expect(text).toMatch(/\|\s*P3\s*\|\s*h\s*\|\s*i\s*\|/);
+  });
+});
 
 function firePaste(doc: Document, target: HTMLElement, opts: { html?: string; text?: string; prevented?: boolean }): ClipboardEvent {
   const evt = doc.createEvent("Event");

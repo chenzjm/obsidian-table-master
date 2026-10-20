@@ -308,14 +308,15 @@ table.tm-grid th[rowspan]:not([rowspan="1"]) {
   vertical-align: middle;
 }
 
-/* Plain header rendering (setting: plainHeaderStyle, default on).
+/* Plain header rendering (fixed default, by design).
  * Markdown tables always require a header row and Obsidian renders it bold;
  * data pasted from Excel/WPS has no header, so the first row would look
- * bolded out of nowhere. The tm-plain-header class on <body> restores the
- * normal weight in Live Preview (cm-table-widget), Reading view and print. */
-body.tm-plain-header .markdown-source-view.mod-cm6 table th,
-body.tm-plain-header .markdown-rendered table th,
-body.tm-plain-header .markdown-preview-view table th,
-body.tm-plain-header .print table th {
+ * bolded out of nowhere. Headers render at normal weight in Live Preview
+ * (cm-table-widget), Reading view and print; users who want a bold header
+ * apply bold themselves in the cell text. */
+.markdown-source-view.mod-cm6 table th,
+.markdown-rendered table th,
+.markdown-preview-view table th,
+.print table th {
   font-weight: normal;
 }

@@ -394,6 +394,13 @@ export default class TableMasterPlugin extends Plugin {
    * and left to the default paste. Plain-text clipboards always default.
    */
   private handleEditorPaste(evt: ClipboardEvent, editor: Editor): void {
+    // Mutual exclusion with the Live Preview widget paste interceptor: it
+    // listens at the document capture phase, runs first, and marks the event
+    // prevented once it takes over. Without this guard both handlers ran for
+    // the same paste — the selection paste and the whole-table replace raced
+    // and the whole-table write could clobber the selection result.
+    if (evt.defaultPrevented) return;
+
     let sel: SelectionRect;
     try {
       sel = getSelectionRectIn(editor, editor.getCursor("from"), editor.getCursor("to"));

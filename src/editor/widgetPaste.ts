@@ -112,10 +112,16 @@ export class WidgetPasteController {
 
   private onPaste(event: ClipboardEvent): void {
     if (event.defaultPrevented) return;
-    // If the paste target is a table cell the user is editing that
-    // cell — leave the default behaviour alone (and keep the cache).
+
+    const data = event.clipboardData;
+    if (!data) return;
+    const payload: ClipboardPayload = {
+      html: data.getData("text/html") || undefined,
+      text: data.getData("text/plain") || undefined,
+    };
+
     const target = event.target as HTMLElement | null;
-    if (target?.closest?.("td, th")) return;
+    const inCell = !!target?.closest?.("td, th");
 
     // Resolve the paste target selection from up to two sources:
     //  1. a LIVE cross-cell DOM selection at paste time (covers the case
@@ -136,24 +142,28 @@ export class WidgetPasteController {
     }
     const selection = live.status === "rect" ? { table: live.table, rect: live.rect } : cached;
 
-    const data = event.clipboardData;
-    if (!data) return;
-    const payload: ClipboardPayload = {
-      html: data.getData("text/html") || undefined,
-      text: data.getData("text/plain") || undefined,
-    };
     if (payload.html) {
       const parsed = parseClipboardModel(payload);
       if (!parsed) return; // not a table → default paste
+      // A TABLE clipboard is always ours to handle, even when the paste
+      // target sits inside a cell (focus stays in the first dragged cell
+      // after a drag-selection). Standing down here lets Obsidian's native
+      // table paste run, which silently replaces the WHOLE table with no
+      // notice — the exact bug reported: drag-select → Cmd+V → whole table
+      // gone. With a selection this is a range paste; without one the
+      // no-selection import runs (replace table / insert new, with notice).
       event.preventDefault();
       this.dispatchPaste(selection, parsed.model, parsed.source);
       return;
     }
 
-    // No HTML on the event (macOS Excel/WPS): the TSV text alone loses
-    // merged cells. Suppress the default, recover the rich payload from
-    // the system clipboard asynchronously, and fall back to a plain
-    // text insert when even that has no HTML table.
+    // No HTML on the event (macOS Excel/WPS): recover the rich payload
+    // asynchronously. Only stand down entirely for a normal in-cell text
+    // paste — the user is editing a cell, there is no table selection, and
+    // the clipboard may be plain text. Otherwise take over: the async
+    // recovery may still find a table, and a text-only clipboard falls
+    // back to reproducing the default insert.
+    if (!selection && inCell) return;
     event.preventDefault();
     void resolvePastePayload(data)
       .then((resolved) => {

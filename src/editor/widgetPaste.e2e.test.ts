@@ -280,11 +280,32 @@ describe("Live Preview widget paste — end to end (DOM events)", () => {
     expect(results[0]).toMatchObject({ kind: "replaced" });
   });
 
-  it("editing a cell (paste target inside td) → not intercepted, default paste", async () => {
+  it("drag-select with focus inside a cell → table paste is INTERCEPTED (Obsidian native would replace the whole table silently — user bug)", async () => {
     dragSelect(doc, win, cellA, cellF);
+    // After the drag the focus stays in the first cell: the paste target
+    // is INSIDE the td. The old code stood down for td targets and let
+    // Obsidian's native paste replace the whole table with no notice.
     firePaste(doc, cellA, { html: EXCEL_HTML });
     await new Promise((r) => setTimeout(r, 10));
-    expect(editor.writes).toBe(0); // untouched, browser pastes into the cell
+
+    expect(editor.writes).toBe(1);
+    expect(results[0]).toMatchObject({ kind: "pasted" });
+    const text = editor.text();
+    expect(text).toContain("X1");
+    expect(text).toMatch(/\|\s*c\s*\|/); // outside cell survives
+  });
+
+  it("caret in a cell, no table selection, plain-text clipboard → not intercepted (normal in-cell paste)", async () => {
+    firePaste(doc, cellA, { text: "plain words" });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(editor.writes).toBe(0); // default paste into the cell
+  });
+
+  it("caret in a cell, no table selection, TABLE clipboard → intercepted, whole-table replace WITH a notice", async () => {
+    firePaste(doc, cellA, { html: EXCEL_HTML });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(editor.writes).toBe(1);
+    expect(results[0]).toMatchObject({ kind: "replaced" }); // notifyImportResult shows a notice
   });
 
   it("typing clears the cache and destroys the selection → paste goes the no-selection path", async () => {

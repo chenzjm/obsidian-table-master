@@ -199,6 +199,15 @@ describe("Live Preview widget paste — end to end (DOM events)", () => {
     results = made.results;
   });
 
+  /** Replace the active controller (tests that build a custom DOM). */
+  function rebuild(view: WidgetPasteView, ed: ReturnType<typeof makeEditor>) {
+    controller.destroy(); // never leak the document-level listeners
+    const made = makeController(view, ed);
+    controller = made.controller;
+    results = made.results;
+    editor = ed;
+  }
+
   afterEach(() => {
     controller.destroy();
     win.getSelection()?.removeAllRanges();
@@ -278,6 +287,53 @@ describe("Live Preview widget paste — end to end (DOM events)", () => {
 
     expect(editor.writes).toBe(1);
     expect(results[0]).toMatchObject({ kind: "replaced" });
+  });
+
+  it("MERGED table (user scenario): selecting cells right of a merge maps to MODEL columns, paste lands in the selection", async () => {
+    // Source table whose first body cell merges over 2 columns/2 rows
+    // (exactly what a previous merged-cell paste produced). DOM placeholder
+    // cells are gone; visible indices drift from model columns.
+    doc.body.innerHTML = "";
+    const { view, root } = makeView(doc);
+    const lines = DOC_LINES.map((_t) => {
+      const el = doc.createElement("div");
+      el.className = "cm-line";
+      return el;
+    });
+    const table = doc.createElement("table");
+    table.innerHTML =
+      '<tr><th>H1</th><th>H2</th><th>H3</th></tr>' +
+      '<tr><td rowspan="2" colspan="2">a</td><td>c</td></tr>' +
+      '<tr><td>e</td><td>f</td></tr>';
+    lines[2].appendChild(table);
+    lines.forEach((l) => root.appendChild(l));
+
+    editor = makeEditor();
+    editor.lines = [
+      "| H1 | H2 | H3 |",
+      "| --- | --- | --- |",
+      "| a | c |",
+      "| e | f |",
+      "",
+      "hello world",
+    ];
+    rebuild(view, editor);
+
+    // Flat th/td list: H1 H2 H3 a c e f → c is index 4, f is index 6.
+    const cellC = table.querySelectorAll("td, th")[4] as HTMLElement; // model col 2, row 1
+    const cellF = table.querySelectorAll("td, th")[6] as HTMLElement; // model col 2, row 2
+    // Drag c → f: with the old cellIndex mapping this computed columns
+    // 1..1-ish and pasted OUTSIDE the user's rectangle.
+    dragSelect(doc, win, cellC, cellF);
+    firePaste(doc, doc.body, { html: '<table><tr><td>X1</td></tr><tr><td>Y1</td></tr></table>' });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(results[0]).toMatchObject({ kind: "pasted" });
+    const text = editor.text();
+    // Pasted values must appear in the LAST column (c/f positions), not in
+    // the merged anchor's columns.
+    expect(text).toMatch(/X1/);
+    expect(text).toMatch(/Y1/);
   });
 
   it("drag-select with focus inside a cell → table paste is INTERCEPTED (Obsidian native would replace the whole table silently — user bug)", async () => {

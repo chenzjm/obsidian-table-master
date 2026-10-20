@@ -26,6 +26,7 @@ import {
 import {
   WidgetSelectionCache,
   rectFromCellInfos,
+  logicalCellPosition,
   type CellInfo,
   type CachedTableSelection,
   type WidgetSelectionRect,
@@ -311,15 +312,10 @@ function nodeToCell(node: Node | null, view: EditorView): CellInfo | null {
   if (!cell) return null;
   const table = cell.closest("table") as HTMLTableElement | null;
   if (!table || !view.dom.contains(table)) return null; // another view's table
-  const tr = cell.closest("tr") as HTMLTableRowElement | null;
-  if (!tr) return null;
-  return {
-    table,
-    row: tr.rowIndex,
-    col: cell.cellIndex,
-    rows: Math.max(1, cell.rowSpan || 1),
-    cols: Math.max(1, cell.colSpan || 1),
-  };
+  // Map through the LOGICAL grid: with merges rendered, visible cellIndex
+  // drifts from the model's column numbers (placeholder cells are gone
+  // from the DOM), which pasted selections outside the user's rectangle.
+  return logicalCellPosition(table, cell);
 }
 
 async function pasteIntoWidgetTable(

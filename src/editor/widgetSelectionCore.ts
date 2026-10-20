@@ -23,6 +23,59 @@ export interface CellInfo {
 }
 
 /**
+ * Map a rendered DOM cell to LOGICAL grid coordinates of its table.
+ *
+ * The Live Preview merge renderer removes placeholder cells from the DOM
+ * and grows the anchor's rowSpan/colSpan, so `cell.cellIndex` (the index
+ * among that row's visible cells) does NOT match the model's column number
+ * whenever merges exist to the left of the cell — selections then paste
+ * shifted outside the user's rectangle. This walks the table like an HTML
+ * grid layout: every span covers its placeholder positions, restoring the
+ * coordinates the expanded table model uses.
+ */
+export function logicalCellPosition(
+  table: HTMLTableElement,
+  cell: HTMLTableCellElement,
+): CellInfo | null {
+  /** "r:c" positions covered by an earlier anchor's span (no DOM cell there). */
+  const occupied = new Set<string>();
+  // querySelectorAll("tr") instead of table.rows / tr.rowIndex: those live
+  // collections are not reliably implemented in embedded DOM shims, and the
+  // document order of <tr> elements is exactly what we need.
+  const trs = Array.from(table.querySelectorAll("tr"));
+  const rowCount = trs.length;
+  const spanOf = (td: HTMLTableCellElement, attr: "rowspan" | "colspan"): number => {
+    const raw = td.getAttribute(attr);
+    const n = raw ? Number.parseInt(raw, 10) : 1;
+    return Number.isFinite(n) && n >= 1 ? n : 1;
+  };
+  for (let r = 0; r < rowCount; r++) {
+    const tr = trs[r];
+    // Same shims caveat: prefer children over the live HTMLTableRowElement.cells.
+    const tds = Array.from(tr.children).filter(
+      (el): el is HTMLTableCellElement => el.tagName === "TD" || el.tagName === "TH",
+    );
+    let c = 0;
+    for (let i = 0; i < tds.length; i++) {
+      while (occupied.has(`${r}:${c}`)) c++;
+      const td = tds[i];
+      const rs = spanOf(td, "rowspan");
+      const cs = spanOf(td, "colspan");
+      if (td === cell) {
+        return { table, row: r, col: c, rows: rs, cols: cs };
+      }
+      for (let dr = 0; dr < rs; dr++) {
+        for (let dc = 0; dc < cs; dc++) {
+          if (dr || dc) occupied.add(`${r + dr}:${c + dc}`);
+        }
+      }
+      c += cs;
+    }
+  }
+  return null;
+}
+
+/**
  * Compute the rectangle covered by selecting from cell `a` to cell `b`.
  * Returns null when either end is missing, the ends live in different
  * tables, or both ends are the same cell (a plain in-cell text selection).

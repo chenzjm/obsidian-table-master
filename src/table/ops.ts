@@ -413,15 +413,28 @@ export function pasteRange(
     }
   }
 
-  // Flatten the clipboard to a raw text grid. Clipboard imports carry plain
-  // cells; if a merged HTML cell sneaks in, its anchor holds the text and the
-  // placeholders paste as empty cells.
-  const grid: string[][] = [];
+  // Flatten the clipboard to a CELL grid — merged clipboard cells keep
+  // their structure (anchor + placeholders), so an Excel/WPS merged block
+  // pastes as a merged block instead of collapsing to plain cells.
+  const grid: (Cell | null)[][] = [];
   for (let i = 0; i < clipRows; i++) {
-    const row: string[] = [];
+    const row: (Cell | null)[] = [];
     for (let j = 0; j < clipCols; j++) {
-      const cell = clip.rows[i]?.[j];
-      row.push(cell && cell.isAnchor ? cell.raw : "");
+      const cell = clip.rows[i]?.[j] ?? null;
+      if (cell && !cell.isAnchor) {
+        // Placeholder: keep the merge-up/merge-left kind, re-anchor the
+        // offsets onto the pasted anchor position later.
+        row.push(
+          cell.raw === "^^" ? makeMergeUp(cell.anchorRowOffset, cell.anchorColOffset) : makeMergeLeft(cell.anchorColOffset, cell.anchorRowOffset),
+        );
+      } else if (cell) {
+        const a = makeAnchor(cell.raw);
+        a.rowspan = cell.rowspan;
+        a.colspan = cell.colspan;
+        row.push(a);
+      } else {
+        row.push(makeAnchor(""));
+      }
     }
     grid.push(row);
   }
@@ -438,7 +451,8 @@ export function pasteRange(
 
   for (let i = 0; i < clipRows; i++) {
     for (let j = 0; j < clipCols; j++) {
-      m.rows[r + i][c + j] = makeAnchor(grid[i][j]);
+      const cell = grid[i][j];
+      if (cell) m.rows[r + i][c + j] = cell;
     }
   }
   recomputeSpans(m);

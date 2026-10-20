@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { parseTable } from "./parser";
 import { serialize } from "./serializer";
 import { pasteRange } from "./ops";
-import { makeAnchor, type TableModel } from "./model";
+import { makeAnchor, makeMergeLeft, makeMergeUp, anchorOf, type TableModel } from "./model";
 
 function md(text: string): TableModel {
   return parseTable(text).model;
@@ -189,5 +189,91 @@ describe("pasteRange", () => {
     expect(raw(reparsed, 1, 1)).toBe("X1");
     expect(raw(reparsed, 2, 2)).toBe("Y2");
     expect(raw(reparsed, 3, 0)).toBe("c1");
+  });
+});
+
+describe("pasteRange keeps MERGED clipboard cells merged (user report)", () => {
+  const target = md(
+    "| 测试测试1 |  |  |  |  |  |  |\n" +
+    "| --- | --- | --- | --- | --- | --- | --- |\n" +
+    "| 测试 |  | 测试3 | 测试4 |  |  |  |\n" +
+    "|  |  |  |  |  |  |  |\n" +
+    "|  |  |  |  |  |  |  |",
+  );
+
+  it("pastes a colspan merge as a real colspan merge", () => {
+    const clip = md("| A |  |\n| --- | --- |\n| X | Y |");
+    // Give the clip a 2-wide merge in its header row.
+    clip.rows[0][0].colspan = 2;
+    clip.rows[0][1] = makeMergeLeft(1);
+    const out = pasteRange(target, clip, 1, 0);
+    expect(out).not.toBeNull();
+    const m = out!.model;
+    // Anchor keeps colspan 2; the placeholder sits at (1,1).
+    expect(m.rows[1][0].colspan).toBe(2);
+    expect(m.rows[1][1].isAnchor).toBe(false);
+    expect(m.rows[1][1].raw).toBe("");
+    expect(m.rows[1][1].anchorColOffset).toBe(1);
+    // Normal cells stay plain.
+    expect(m.rows[2][0].raw).toBe("X");
+    expect(m.rows[2][1].raw).toBe("Y");
+  });
+
+  it("pastes a rowspan merge as a real rowspan merge", () => {
+    const clip = md("| A |\n| --- |\n|  |");
+    clip.rows[0][0].rowspan = 2;
+    clip.rows[1][0] = makeMergeUp(1);
+    const out = pasteRange(target, clip, 1, 0)!;
+    expect(out.model.rows[1][0].rowspan).toBe(2);
+    expect(out.model.rows[2][0].isAnchor).toBe(false);
+    expect(out.model.rows[2][0].raw).toBe("^^");
+  });
+
+  it("pastes a 2x2 block merge intact", () => {
+    const clip = md("| A |  |\n| --- | --- |\n|  |  |");
+    clip.rows[0][0].rowspan = 2;
+    clip.rows[0][0].colspan = 2;
+    clip.rows[0][1] = makeMergeLeft(1);
+    clip.rows[1][0] = makeMergeUp(1);
+    clip.rows[1][1] = makeMergeUp(1, 1);
+    const out = pasteRange(target, clip, 2, 0)!;
+    const m = out.model;
+    expect(m.rows[2][0].colspan).toBe(2);
+    expect(m.rows[2][0].rowspan).toBe(2);
+    expect(anchorOf(m, 3, 1)).toEqual({ r: 2, c: 0 });
+    // Round-trip: serialize keeps the placeholders.
+    const text = serialize(m, "extended");
+    expect(text).toContain("<");
+    expect(text).toContain("^^");
+  });
+
+  it("keeps clip merges when the paste expands the table", () => {
+    // 3-row clip anchored at the last table row → the table grows by 2 rows
+    // (the separator line is not a model row: the table has 2 model rows).
+    const small = md("| H1 | H2 |\n| --- | --- |\n| a | b |");
+    expect(small.rows.length).toBe(2);
+    const clip = md("| A |  |\n| --- | --- |\n| 1 | 2 |\n| 2 |  |");
+    clip.rows[2][0].colspan = 2;
+    clip.rows[2][1] = makeMergeLeft(1);
+    const out = pasteRange(small, clip, 1, 0)!;
+    expect(out.rowsAdded).toBe(2);
+    const m = out.model;
+    expect(m.rows[3][0].colspan).toBe(2);
+    expect(m.rows[3][1].isAnchor).toBe(false);
+  });
+
+  it("keeps the target's own merge intact while pasting a merged clip next to it", () => {
+    // Target: header A spans rows 0-1 (col 0). The region starts at the last
+    // model row (row 2), fully below the merge — the merge must survive.
+    const withMerge = md("| A | B |\n| --- | --- |\n| x | y |\n| z | w |");
+    withMerge.rows[0][0].rowspan = 2;
+    withMerge.rows[1][0] = makeMergeUp(1);
+    const clip = md("| P |\n| --- |\n| Q |");
+    const out = pasteRange(withMerge, clip, 2, 0)!;
+    expect(out.rowsAdded).toBe(1);
+    expect(out.model.rows[0][0].rowspan).toBe(2);
+    expect(out.model.rows[1][0].raw).toBe("^^");
+    expect(out.model.rows[2][0].raw).toBe("P");
+    expect(out.model.rows[3][0].raw).toBe("Q");
   });
 });

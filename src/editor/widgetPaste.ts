@@ -1,16 +1,15 @@
 // Live Preview Cmd/Ctrl+V range paste.
 //
-// Obsidian renders Live Preview tables as CM6 widgets whose cells are
-// contenteditable DOM. Pastes inside those widgets never reach the
-// `editor-paste` workspace event (which only fires while the plain-text CM
-// editor holds focus), so the source-mode interception misses them. This
-// extension hooks CM's `domEventHandlers` instead: when the paste target is
-// a table cell and the *DOM* selection spans at least two cells of the same
-// table, we translate the selection into a model rectangle and run the same
-// selection-aware paste flow used everywhere else.
+// Obsidian renders Live Preview tables as CM6 widgets whose cells are plain
+// DOM (editable only after clicking into them). Pastes in that state never
+// reach the `editor-paste` workspace event, and — crucially — the moment
+// Cmd/Ctrl+V is pressed, CodeMirror resets the drag-selection back to its
+// own caret, so by the time the paste event fires the cross-cell DOM
+// selection is already collapsed.
 //
-// Everything else — single-cell selections, plain-text clipboards, pastes
-// outside tables — is left to the default widget behaviour.
+// The unit-tested logic lives in widgetSelectionCore.ts; this module only
+// wires DOM events into it and delegates the actual paste to the shared
+// selection-paste flow in actions.ts.
 
 import { EditorView, ViewPlugin, PluginValue } from "@codemirror/view";
 import type { TableModel } from "../table/model";
@@ -22,14 +21,21 @@ import {
   type ClipboardImportResult,
   type ActionContext,
 } from "./actions";
+import {
+  WidgetSelectionCache,
+  rectFromCellInfos,
+  type CellInfo,
+  type CachedTableSelection,
+  type WidgetSelectionRect,
+} from "./widgetSelectionCore";
 
-/** Model-space rectangle derived from a DOM selection inside a table widget. */
-export interface WidgetSelectionRect {
-  top: number;
-  left: number;
-  bottom: number;
-  right: number;
-}
+export {
+  rectFromCellInfos,
+  WidgetSelectionCache,
+  type CellInfo,
+  type CachedTableSelection,
+  type WidgetSelectionRect,
+} from "./widgetSelectionCore";
 
 export interface WidgetPasteHandlers {
   /** Resolve the Obsidian editor + output format for the view being pasted into. */
@@ -41,77 +47,32 @@ export interface WidgetPasteHandlers {
 }
 
 export function buildWidgetTablePasteExt(handlers: WidgetPasteHandlers) {
-  // The challenge this plugin solves: while a rendered (non-editable) table
-  // is drag-selected, the focus stays on the editor surface. The moment the
-  // user presses Cmd/Ctrl+V, CodeMirror resets the DOM selection back to its
-  // own caret — so by the time the paste event fires the cross-cell
-  // selection is already collapsed and reading it live is useless.
-  //
-  // Strategy: cache the table selection while it exists.
-  //   - `selectionchange` records any cross-cell selection inside one of
-  //     this view's rendered tables.
-  //   - Any mousedown, and any keydown other than the paste/copy shortcuts
-  //     (or bare modifier keys), invalidates the cache — a fresh drag
-  //     rebuilds it immediately via selectionchange.
-  //   - On paste, the cache plus a table clipboard takes over the event.
   return ViewPlugin.fromClass(
     class implements PluginValue {
       private readonly view: EditorView;
       private readonly doc: Document;
-      private cache: { table: HTMLTableElement; rect: WidgetSelectionRect } | null = null;
-
-      private readonly onSelectionChange = (): void => {
-        const found = domSelectionRect(this.view);
-        if (found) this.cache = found;
-      };
-
-      private readonly onMouseDown = (): void => {
-        // A click anywhere invalidates the cached selection. Drag-selecting
-        // rebuilds it through selectionchange, so this is always safe.
-        this.cache = null;
-      };
-
-      private readonly onKeyDown = (event: KeyboardEvent): void => {
-        if (event.metaKey || event.ctrlKey) {
-          // Keep the cache for the paste/copy shortcuts themselves.
-          const k = event.key.toLowerCase();
-          if (k === "v" || k === "c") return;
-          if (k === "meta" || k === "control") return; // bare modifier press
-          this.cache = null;
-          return;
-        }
-        if (["Shift", "Alt", "Meta", "Control"].includes(event.key)) return;
-        this.cache = null; // typing / arrows / Esc … end the selection
-      };
-
-      private readonly onPaste = (event: ClipboardEvent): void => {
-        // Every markdown view runs its own copy of this plugin; the first
-        // one that takes over sets defaultPrevented, the rest stand down.
-        if (event.defaultPrevented) return;
-
-        const cached = this.cache;
-        this.cache = null; // consumed either way
-        if (!cached || !cached.table.isConnected) return;
-
-        const data = event.clipboardData;
-        if (!data) return;
-        const payload: ClipboardPayload = {
-          html: data.getData("text/html") || undefined,
-          text: data.getData("text/plain") || undefined,
-        };
-        const parsed = parseClipboardModel(payload);
-        if (!parsed) return; // not a table → default paste
-
-        // Both conditions met: take over the paste.
-        event.preventDefault();
-        void pasteIntoWidgetTable(this.view, cached.table, cached.rect, parsed.model, parsed.source, handlers);
-      };
+      private readonly cache = new WidgetSelectionCache();
 
       private readonly listener = (event: Event): void => {
-        if (event.type === "paste") this.onPaste(event as ClipboardEvent);
-        else if (event.type === "keydown") this.onKeyDown(event as KeyboardEvent);
-        else if (event.type === "mousedown") this.onMouseDown();
-        else this.onSelectionChange();
+        switch (event.type) {
+          case "selectionchange":
+            this.cache.recordSelection(this.currentTableSelection());
+            break;
+          case "mousedown":
+            this.cache.onMouseDown();
+            break;
+          case "keydown":
+            this.cache.onKeydown(
+              (event as KeyboardEvent).key,
+              (event as KeyboardEvent).metaKey,
+              (event as KeyboardEvent).ctrlKey,
+              (event as KeyboardEvent).shiftKey,
+            );
+            break;
+          case "paste":
+            this.onPaste(event as ClipboardEvent);
+            break;
+        }
       };
 
       constructor(view: EditorView) {
@@ -127,64 +88,65 @@ export function buildWidgetTablePasteExt(handlers: WidgetPasteHandlers) {
           this.doc.removeEventListener(type, this.listener, true);
         }
       }
+
+      private onPaste(event: ClipboardEvent): void {
+        // Every markdown view runs its own copy of this plugin; the first
+        // one that takes over sets defaultPrevented, the rest stand down
+        // (and drop their stale cache too).
+        const cached = this.cache.take();
+        if (event.defaultPrevented) return;
+        if (!cached) return;
+        const table = cached.table as HTMLTableElement | null;
+        if (!(table instanceof HTMLTableElement) || !table.isConnected) return;
+
+        const data = event.clipboardData;
+        if (!data) return;
+        const payload: ClipboardPayload = {
+          html: data.getData("text/html") || undefined,
+          text: data.getData("text/plain") || undefined,
+        };
+        const parsed = parseClipboardModel(payload);
+        if (!parsed) return; // not a table → default paste
+
+        // Both conditions met: take over the paste.
+        event.preventDefault();
+        void pasteIntoWidgetTable(this.view, table, cached.rect, parsed.model, parsed.source, handlers);
+      }
+
+      /** Resolve the current DOM selection into a cached table selection. */
+      private currentTableSelection(): CachedTableSelection | null {
+        // Prefer the window hosting this view (popout windows), falling
+        // back to the active window like the merge renderer does.
+        const win = this.view.dom.ownerDocument.defaultView ?? activeWindow;
+        const sel = win.getSelection();
+        if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
+
+        const start = nodeToCell(sel.anchorNode, this.view);
+        const end = nodeToCell(sel.focusNode, this.view);
+        const rect = rectFromCellInfos(start, end);
+        if (!rect || !start) return null;
+        return { table: start.table, rect };
+      }
     },
   );
 }
 
-/**
- * Inspect the current DOM selection. When it spans at least two cells of the
- * same rendered table widget, return that table plus the model-space
- * rectangle covered (rowspan/colspan aware). Returns null otherwise.
- *
- * Cell indexes map 1:1 to model coordinates because Obsidian renders one
- * `<td>` per source cell (merge placeholders included) and Table Master
- * only toggles attributes on them.
- */
-export function domSelectionRect(view: EditorView): { table: HTMLTableElement; rect: WidgetSelectionRect } | null {
-  // Prefer the window hosting this view (popout windows), falling back to
-  // the active window like the merge renderer does.
-  const win = view.dom.ownerDocument.defaultView ?? activeWindow;
-  const sel = win.getSelection();
-  if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
-
-  const start = nodeToCell(sel.anchorNode);
-  const end = nodeToCell(sel.focusNode);
-  if (!start || !end) return null;
-  if (start.table !== end.table) return null; // crosses tables / leaves it
-  if (!view.dom.contains(start.table)) return null; // another view's table
-  if (start.cell === end.cell) return null; // plain in-cell text selection
-
-  // Expand anchor cells with rowspan/colspan so a selection that starts or
-  // ends inside a merged cell covers the whole merged region.
-  const span = (cell: HTMLTableCellElement) => ({
-    rows: Math.max(1, cell.rowSpan || 1),
-    cols: Math.max(1, cell.colSpan || 1),
-  });
-  const s = span(start.cell);
-  const e = span(end.cell);
-  return {
-    table: start.table,
-    rect: {
-      top: Math.min(start.row, end.row),
-      left: Math.min(start.col, end.col),
-      bottom: Math.max(start.row + s.rows - 1, end.row + e.rows - 1),
-      right: Math.max(start.col + s.cols - 1, end.col + e.cols - 1),
-    },
-  };
-}
-
-function nodeToCell(
-  node: Node | null,
-): { table: HTMLTableElement; cell: HTMLTableCellElement; row: number; col: number } | null {
+function nodeToCell(node: Node | null, view: EditorView): CellInfo | null {
   if (!node) return null;
   const el = (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement) as HTMLElement | null;
   const cell = el?.closest?.("td, th") as HTMLTableCellElement | null;
   if (!cell) return null;
   const table = cell.closest("table") as HTMLTableElement | null;
-  if (!table) return null;
+  if (!table || !view.dom.contains(table)) return null; // another view's table
   const tr = cell.closest("tr") as HTMLTableRowElement | null;
   if (!tr) return null;
-  return { table, cell, row: tr.rowIndex, col: cell.cellIndex };
+  return {
+    table,
+    row: tr.rowIndex,
+    col: cell.cellIndex,
+    rows: Math.max(1, cell.rowSpan || 1),
+    cols: Math.max(1, cell.colSpan || 1),
+  };
 }
 
 async function pasteIntoWidgetTable(

@@ -5,9 +5,9 @@
 
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 
-const css = readFileSync(fileURLToPath(new URL("../../styles.css", import.meta.url)), "utf8");
+const css = readFileSync(resolve(process.cwd(), "styles.css"), "utf8");
 
 describe("plain header style (fixed default)", () => {
   it("renders th at normal weight in the source, reading and print views", () => {

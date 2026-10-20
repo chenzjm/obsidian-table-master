@@ -41,31 +41,36 @@ export interface WidgetPasteHandlers {
 }
 
 export function buildWidgetTablePasteExt(handlers: WidgetPasteHandlers) {
-  // Same pattern as the widget context-menu interceptor: a capture-phase
-  // "paste" listener on the CM editor DOM. Capture fires before the table
-  // widget's own contenteditable handling, and leaving `preventDefault`
-  // untouched lets the default paste run for every case we don't own.
+  // The "paste" listener lives on the *document* in the capture phase:
+  // while a rendered table is drag-selected the focus (and thus the paste
+  // target) can be anywhere — the editor surface, a table cell, or nothing
+  // at all (body), in which case the event never reaches the editor DOM.
+  // A document-level capture listener sees every paste; we then decide by
+  // the DOM selection alone. Leaving `preventDefault` untouched lets the
+  // default paste run for every case we don't own.
   return ViewPlugin.fromClass(
     class implements PluginValue {
       private readonly view: EditorView;
+      private readonly doc: Document;
       private readonly listener: (event: Event) => void;
 
       constructor(view: EditorView) {
         this.view = view;
+        this.doc = view.dom.ownerDocument;
         this.listener = (event) => this.handle(event as ClipboardEvent);
-        view.dom.addEventListener("paste", this.listener, true);
+        this.doc.addEventListener("paste", this.listener, true);
       }
 
       destroy(): void {
-        this.view.dom.removeEventListener("paste", this.listener, true);
+        this.doc.removeEventListener("paste", this.listener, true);
       }
 
       private handle(event: ClipboardEvent): void {
-        // Judge by the *DOM selection*, not by the paste target: while a
-        // rendered (non-editable) table is drag-selected the focus — and
-        // with it the paste target — stays on the plain editor surface, so
-        // a target-based check would never fire in Live Preview.
-        const found = domSelectionRect();
+        // Every markdown view runs its own copy of this plugin; the first
+        // one that takes over sets defaultPrevented, the rest stand down.
+        if (event.defaultPrevented) return;
+
+        const found = domSelectionRect(this.view);
         if (!found) return; // no cross-cell table selection → default paste
 
         const data = event.clipboardData;
@@ -94,14 +99,18 @@ export function buildWidgetTablePasteExt(handlers: WidgetPasteHandlers) {
  * `<td>` per source cell (merge placeholders included) and Table Master
  * only toggles attributes on them.
  */
-export function domSelectionRect(): { table: HTMLTableElement; rect: WidgetSelectionRect } | null {
-  const sel = activeWindow.getSelection();
+export function domSelectionRect(view: EditorView): { table: HTMLTableElement; rect: WidgetSelectionRect } | null {
+  // Prefer the window hosting this view (popout windows), falling back to
+  // the active window like the merge renderer does.
+  const win = view.dom.ownerDocument.defaultView ?? activeWindow;
+  const sel = win.getSelection();
   if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
 
   const start = nodeToCell(sel.anchorNode);
   const end = nodeToCell(sel.focusNode);
   if (!start || !end) return null;
   if (start.table !== end.table) return null; // crosses tables / leaves it
+  if (!view.dom.contains(start.table)) return null; // another view's table
   if (start.cell === end.cell) return null; // plain in-cell text selection
 
   // Expand anchor cells with rowspan/colspan so a selection that starts or

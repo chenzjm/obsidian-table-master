@@ -571,6 +571,7 @@ async function confirmExpandPaste(
 async function readClipboardPayload(): Promise<ClipboardPayload | null> {
   /** Never let a stalled system clipboard read swallow the paste. */
   const withTimeout = <T>(p: Promise<T>, ms = 400): Promise<T | null> =>
+    // eslint-disable-next-line obsidianmd/prefer-active-window-timers -- pure module without a view context; this is a last-resort safety net, so the timer's window is irrelevant.
     Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), ms))]);
   // Modern path: navigator.clipboard.read() exposes both text/html and text/plain.
   const nav = typeof navigator !== "undefined" ? navigator : null;
@@ -578,7 +579,7 @@ async function readClipboardPayload(): Promise<ClipboardPayload | null> {
     try {
       const items = await withTimeout(nav.clipboard.read());
       const out: ClipboardPayload = {};
-      for (const item of items) {
+      for (const item of items ?? []) {
         if (item.types.includes("text/html") && !out.html) {
           const blob = await item.getType("text/html");
           out.html = await blob.text();

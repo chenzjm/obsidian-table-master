@@ -61,7 +61,7 @@ function buildTableDom(root: HTMLElement, doc: Document): { cellA: HTMLElement; 
     el.textContent = text;
     return el;
   };
-  const lines = DOC_LINES.map((text) => mk("cm-line", ""));
+  const lines = DOC_LINES.map((_text) => mk("cm-line", ""));
   // Line 0..3 host the table widget (a real <table> like Obsidian renders).
   const table = doc.createElement("table");
   const rows = [
@@ -118,7 +118,7 @@ function makeEditor() {
 function makeController(view: WidgetPasteView, editor: ReturnType<typeof makeEditor>) {
   const results: ClipboardImportResult[] = [];
   const controller = new WidgetPasteController(view, {
-    getActionContext: (): ActionContext => ({ app: {}, editor: editor as never, format: "extended" }),
+    getActionContext: (): ActionContext => ({ app: {} as never, editor: editor as never, format: "extended" }),
     onResult: (r) => results.push(r),
     onFallbackError: () => results.push({ kind: "failed" } as ClipboardImportResult),
   });

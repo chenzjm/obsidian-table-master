@@ -6,7 +6,7 @@
 // pasted as a single-column table. Needs a DOM because the recovery
 // feeds the HTML into the real importer (DOMParser).
 
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 import { resolvePastePayload, parseClipboardModel, importModelNoSelection, type ActionContext } from "./actions";
 
 /** Excel-style rich payload with merged cells, as the system clipboard returns it. */

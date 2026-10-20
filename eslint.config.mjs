@@ -41,4 +41,14 @@ export default [
       ],
     },
   },
+  {
+    // Test files: DOM fixtures and fake timers are fine there; the Obsidian
+    // popout-window / UI-copy rules target product code only.
+    files: ["src/**/*.test.ts"],
+    rules: {
+      "obsidianmd/prefer-active-window-timers": "off",
+      "obsidianmd/prefer-active-doc": "off",
+      "obsidianmd/ui/sentence-case": "off",
+    },
+  },
 ];

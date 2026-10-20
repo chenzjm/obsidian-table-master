@@ -48,3 +48,9 @@ export class Plugin {
 }
 
 export const Platform = { isMobile: false, isDesktop: true };
+/** Test double for the Obsidian `activeWindow` global (timers etc.). */
+export const activeWindow: {
+  setTimeout: (fn: () => void, ms?: number) => number;
+} = {
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
+};

@@ -219,7 +219,7 @@ export class WidgetPasteController {
    *    ends in two different tables — must be blocked, not ignored.
    */
   private currentLiveSelection():
-    | { status: "rect"; table: HTMLElement; rect: WidgetSelectionRect }
+    | { status: "rect"; table: CachedTableSelection["table"]; rect: WidgetSelectionRect }
     | { status: "none" }
     | { status: "invalid" } {
     // Prefer the window hosting this view (popout windows), falling

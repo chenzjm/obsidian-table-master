@@ -41,37 +41,57 @@ export interface WidgetPasteHandlers {
 }
 
 export function buildWidgetTablePasteExt(handlers: WidgetPasteHandlers) {
-  // The "paste" listener lives on the *document* in the capture phase:
-  // while a rendered table is drag-selected the focus (and thus the paste
-  // target) can be anywhere — the editor surface, a table cell, or nothing
-  // at all (body), in which case the event never reaches the editor DOM.
-  // A document-level capture listener sees every paste; we then decide by
-  // the DOM selection alone. Leaving `preventDefault` untouched lets the
-  // default paste run for every case we don't own.
+  // The challenge this plugin solves: while a rendered (non-editable) table
+  // is drag-selected, the focus stays on the editor surface. The moment the
+  // user presses Cmd/Ctrl+V, CodeMirror resets the DOM selection back to its
+  // own caret — so by the time the paste event fires the cross-cell
+  // selection is already collapsed and reading it live is useless.
+  //
+  // Strategy: cache the table selection while it exists.
+  //   - `selectionchange` records any cross-cell selection inside one of
+  //     this view's rendered tables.
+  //   - Any mousedown, and any keydown other than the paste/copy shortcuts
+  //     (or bare modifier keys), invalidates the cache — a fresh drag
+  //     rebuilds it immediately via selectionchange.
+  //   - On paste, the cache plus a table clipboard takes over the event.
   return ViewPlugin.fromClass(
     class implements PluginValue {
       private readonly view: EditorView;
       private readonly doc: Document;
-      private readonly listener: (event: Event) => void;
+      private cache: { table: HTMLTableElement; rect: WidgetSelectionRect } | null = null;
 
-      constructor(view: EditorView) {
-        this.view = view;
-        this.doc = view.dom.ownerDocument;
-        this.listener = (event) => this.handle(event as ClipboardEvent);
-        this.doc.addEventListener("paste", this.listener, true);
-      }
+      private readonly onSelectionChange = (): void => {
+        const found = domSelectionRect(this.view);
+        if (found) this.cache = found;
+      };
 
-      destroy(): void {
-        this.doc.removeEventListener("paste", this.listener, true);
-      }
+      private readonly onMouseDown = (): void => {
+        // A click anywhere invalidates the cached selection. Drag-selecting
+        // rebuilds it through selectionchange, so this is always safe.
+        this.cache = null;
+      };
 
-      private handle(event: ClipboardEvent): void {
+      private readonly onKeyDown = (event: KeyboardEvent): void => {
+        if (event.metaKey || event.ctrlKey) {
+          // Keep the cache for the paste/copy shortcuts themselves.
+          const k = event.key.toLowerCase();
+          if (k === "v" || k === "c") return;
+          if (k === "meta" || k === "control") return; // bare modifier press
+          this.cache = null;
+          return;
+        }
+        if (["Shift", "Alt", "Meta", "Control"].includes(event.key)) return;
+        this.cache = null; // typing / arrows / Esc … end the selection
+      };
+
+      private readonly onPaste = (event: ClipboardEvent): void => {
         // Every markdown view runs its own copy of this plugin; the first
         // one that takes over sets defaultPrevented, the rest stand down.
         if (event.defaultPrevented) return;
 
-        const found = domSelectionRect(this.view);
-        if (!found) return; // no cross-cell table selection → default paste
+        const cached = this.cache;
+        this.cache = null; // consumed either way
+        if (!cached || !cached.table.isConnected) return;
 
         const data = event.clipboardData;
         if (!data) return;
@@ -84,7 +104,28 @@ export function buildWidgetTablePasteExt(handlers: WidgetPasteHandlers) {
 
         // Both conditions met: take over the paste.
         event.preventDefault();
-        void pasteIntoWidgetTable(this.view, found.table, found.rect, parsed.model, parsed.source, handlers);
+        void pasteIntoWidgetTable(this.view, cached.table, cached.rect, parsed.model, parsed.source, handlers);
+      };
+
+      private readonly listener = (event: Event): void => {
+        if (event.type === "paste") this.onPaste(event as ClipboardEvent);
+        else if (event.type === "keydown") this.onKeyDown(event as KeyboardEvent);
+        else if (event.type === "mousedown") this.onMouseDown();
+        else this.onSelectionChange();
+      };
+
+      constructor(view: EditorView) {
+        this.view = view;
+        this.doc = view.dom.ownerDocument;
+        for (const type of ["selectionchange", "mousedown", "keydown", "paste"]) {
+          this.doc.addEventListener(type, this.listener, true);
+        }
+      }
+
+      destroy(): void {
+        for (const type of ["selectionchange", "mousedown", "keydown", "paste"]) {
+          this.doc.removeEventListener(type, this.listener, true);
+        }
       }
     },
   );

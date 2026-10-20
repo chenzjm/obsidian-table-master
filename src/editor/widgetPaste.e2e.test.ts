@@ -276,7 +276,7 @@ describe("Live Preview widget paste — end to end (DOM events)", () => {
     expect(editor.text()).toContain("X1");
   });
 
-  it("selection actually destroyed before paste (collapsed) → whole-table path, single write", async () => {
+  it("selection actually destroyed before paste (collapsed) → stand down (editor-paste owns the no-selection path)", async () => {
     dragSelect(doc, win, cellA, cellF);
     // The click moved the caret: selection collapses, cache already cleared
     // by the mousedown.
@@ -285,8 +285,8 @@ describe("Live Preview widget paste — end to end (DOM events)", () => {
     firePaste(doc, doc.body, { html: EXCEL_HTML });
     await new Promise((r) => setTimeout(r, 10));
 
-    expect(editor.writes).toBe(1);
-    expect(results[0]).toMatchObject({ kind: "replaced" });
+    expect(editor.writes).toBe(0);
+    expect(results).toHaveLength(0);
   });
 
   it("MERGED table (user scenario): selecting cells right of a merge maps to MODEL columns, paste lands in the selection", async () => {
@@ -357,14 +357,17 @@ describe("Live Preview widget paste — end to end (DOM events)", () => {
     expect(editor.writes).toBe(0); // default paste into the cell
   });
 
-  it("caret in a cell, no table selection, TABLE clipboard → intercepted, whole-table replace WITH a notice", async () => {
+  it("caret in a cell, no table selection, TABLE clipboard → stand down (editor-paste handler owns it: whole-table replace + notice)", async () => {
     firePaste(doc, cellA, { html: EXCEL_HTML });
     await new Promise((r) => setTimeout(r, 10));
-    expect(editor.writes).toBe(1);
-    expect(results[0]).toMatchObject({ kind: "replaced" }); // notifyImportResult shows a notice
+    // The interceptor only owns DRAG selections over the widget; the
+    // editor-paste handler (not simulated here) turns this paste into a
+    // whole-table replace with a notice. Covered in editorPasteRegression.
+    expect(editor.writes).toBe(0);
+    expect(results).toHaveLength(0);
   });
 
-  it("typing clears the cache and destroys the selection → paste goes the no-selection path", async () => {
+  it("typing clears the cache and destroys the selection → stand down (editor-paste owns the no-selection path)", async () => {
     dragSelect(doc, win, cellA, cellF);
     fireKey(doc, doc.body, "x");
     // Real typing moves the caret and collapses the DOM selection.
@@ -373,7 +376,8 @@ describe("Live Preview widget paste — end to end (DOM events)", () => {
     fireKey(doc, doc.body, "v", true);
     firePaste(doc, doc.body, { html: EXCEL_HTML });
     await new Promise((r) => setTimeout(r, 10));
-    expect(results[0]).toMatchObject({ kind: "replaced" });
+    expect(editor.writes).toBe(0);
+    expect(results).toHaveLength(0);
   });
 
   it("already-prevented paste (widget takeover elsewhere) → zero side effects", async () => {
@@ -390,11 +394,12 @@ describe("Live Preview widget paste — end to end (DOM events)", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(editor.lastReplaced).toBe("plain words");
     // The first paste destroyed the selection (widget rebuilds in the real
-    // app); a follow-up table paste has no stale selection → whole-table path.
+    // app); a follow-up table paste has no stale selection → the interceptor
+    // stands down and the editor-paste handler owns it (not simulated here).
     win.getSelection()?.removeAllRanges();
     firePaste(doc, doc.body, { html: EXCEL_HTML });
     await new Promise((r) => setTimeout(r, 10));
-    expect(results[0]).toMatchObject({ kind: "replaced" });
+    expect(editor.writes).toBe(1); // only the first (text) insert
   });
 
   it("selection spanning two tables → blocked with a notice, document untouched", async () => {

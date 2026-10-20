@@ -141,33 +141,41 @@ export class WidgetPasteController {
     };
     TM_DEBUG("paste payload:", payload.html ? `html ${payload.html.length}b` : "no html", payload.text ? `text "${payload.text.slice(0, 40).replace(/\t/g, "\\t")}"` : "no text");
 
-    const inCell = !!target?.closest?.("td, th");
-
-    // Resolve the paste target selection from up to two sources:
-    //  1. a LIVE cross-cell DOM selection at paste time (covers the case
-    //     where a stray mousedown cleared the cache but the visible
-    //     drag-selection is still intact), and
-    //  2. the drag-selection cache (covers CodeMirror resetting the
-    //     selection to its caret right before the paste event).
-    // A selection that is PARTIALLY inside a table (dragged past the table
-    // edge, or spanning two tables) is invalid: it must be blocked with a
-    // notice, never silently treated as "no selection" — that used to
-    // replace the whole table.
+    // This interceptor exists for ONE situation the plugin's editor-paste
+    // handler cannot see: a drag-selection across rendered table cells,
+    // whose DOM selection CodeMirror resets to its caret before the paste
+    // event fires. Everything else — source-mode selections, no-selection
+    // pastes (whole-table replace / new-table insert), plain in-cell text
+    // editing — is the responsibility of the plugin's editor-paste handler,
+    // which understands CM selections. So: with no live widget-table
+    // selection and no cached drag-selection we stand down and let the
+    // event flow to it.
+    // Consume the cache unconditionally: whatever this paste becomes, the
+    // drag-selection it remembers must not leak into the NEXT paste (that
+    // leak once made a later, unrelated paste target the old rectangle).
     const cached = this.cache.take();
     const live = this.currentLiveSelection();
-    TM_DEBUG(
-      "selection sources:",
-      "live=" + live.status,
-      live.status === "rect" ? `live rect r${live.rect.top}c${live.rect.left}-r${live.rect.bottom}c${live.rect.right}` : "",
-      "cached=" + (cached ? `r${cached.rect.top}c${cached.rect.left}-r${cached.rect.bottom}c${cached.rect.right}` : "null"),
-    );
     if (live.status === "invalid") {
+      // A selection partially inside a table (dragged past the table edge
+      // or spanning two tables) is blocked with a notice, never silently
+      // treated as "no selection" — that used to replace the whole table.
       TM_DEBUG("→ BLOCK (cross-table / partial selection)");
       event.preventDefault();
       this.handlers.onResult({ kind: "blocked", reason: "crossTable" });
       return;
     }
-    const selection = live.status === "rect" ? { table: live.table, rect: live.rect } : cached;
+    const selection =
+      live.status === "rect" ? { table: live.table, rect: live.rect } : cached;
+    TM_DEBUG(
+      "selection sources:",
+      "live=" + live.status,
+      live.status === "rect" ? `live rect r${live.rect.top}c${live.rect.left}-r${live.rect.bottom}c${live.rect.right}` : "",
+      "cached=" + (live.status !== "rect" && cached ? `r${cached.rect.top}c${cached.rect.left}-r${cached.rect.bottom}c${cached.rect.right}` : "n/a"),
+    );
+    if (!selection) {
+      TM_DEBUG("→ stand down: no widget-table selection → editor-paste handler owns this paste");
+      return;
+    }
 
     if (payload.html) {
       const parsed = parseClipboardModel(payload);
@@ -175,30 +183,21 @@ export class WidgetPasteController {
         TM_DEBUG("→ not a table clipboard → default paste");
         return; // not a table → default paste
       }
-      TM_DEBUG(`→ TAKE OVER: ${parsed.source} table ${parsed.model.rows.length}x${parsed.model.cols}, selection=${selection ? "yes" : "no"}`);
-      // A TABLE clipboard is always ours to handle, even when the paste
-      // target sits inside a cell (focus stays in the first dragged cell
-      // after a drag-selection). Standing down here lets Obsidian's native
-      // table paste run, which silently replaces the WHOLE table with no
-      // notice — the exact bug reported: drag-select → Cmd+V → whole table
-      // gone. With a selection this is a range paste; without one the
-      // no-selection import runs (replace table / insert new, with notice).
+      TM_DEBUG(`→ TAKE OVER: ${parsed.source} table ${parsed.model.rows.length}x${parsed.model.cols} → range paste`);
+      // The paste target may sit inside a cell (focus stays in the first
+      // dragged cell after a drag-selection) — we still take over, because
+      // Obsidian's native table paste would silently replace the WHOLE
+      // table with no notice.
       event.preventDefault();
       this.dispatchPaste(selection, parsed.model, parsed.source);
       return;
     }
 
     // No HTML on the event (macOS Excel/WPS): recover the rich payload
-    // asynchronously. Only stand down entirely for a normal in-cell text
-    // paste — the user is editing a cell, there is no table selection, and
-    // the clipboard may be plain text. Otherwise take over: the async
-    // recovery may still find a table, and a text-only clipboard falls
-    // back to reproducing the default insert.
-    if (!selection && inCell) {
-      TM_DEBUG("→ stand down: in-cell edit, no selection, no html (normal in-cell paste)");
-      return;
-    }
-    TM_DEBUG("→ TAKE OVER (async clipboard recovery)");
+    // asynchronously. The selection is only consumable right now (the
+    // widget rebuilds after the paste), so we take over even without HTML;
+    // a text-only clipboard falls back to reproducing the default insert.
+    TM_DEBUG("→ TAKE OVER (async clipboard recovery, range paste)");
     event.preventDefault();
     void resolvePastePayload(data)
       .then((resolved) => {

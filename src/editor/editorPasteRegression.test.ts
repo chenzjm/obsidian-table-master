@@ -78,6 +78,16 @@ const TABLE_DOC = [
   "hello world",
 ];
 
+const TWO_TABLES_DOC = [
+  "| H1 | H2 |",
+  "| --- | --- |",
+  "| a | b |",
+  "",
+  "| H3 | H4 |",
+  "| --- | --- |",
+  "| c | d |",
+];
+
 function makePlugin(): TableMasterPlugin {
   const plugin = Object.create(TableMasterPlugin.prototype) as TableMasterPlugin;
   (plugin as unknown as { app: unknown }).app = {};
@@ -147,5 +157,60 @@ describe("handleEditorPaste single-execution paths", () => {
     plugin["handleEditorPaste"](fakeEvent({ text: "测试\n测试1" }), editor as never);
     await new Promise((r) => setTimeout(r, 10)); // settle the full async chain
     expect(editor.writes).toBe(1);
+  });
+});
+
+describe("handleEditorPaste WPS-style blocking of invalid selections", () => {
+  it("cross-table selection + table clipboard → preventDefault + blocked, zero writes", async () => {
+    const plugin = makePlugin();
+    // from inside table 1, to inside table 2 → kind "cross".
+    const editor = new MockEditor(
+      TWO_TABLES_DOC,
+      { line: 2, ch: 2 },
+      [
+        { line: 2, ch: 2 },
+        { line: 6, ch: 2 },
+      ],
+    );
+    const evt = fakeEvent({ html: EXCEL_MERGED_HTML });
+    plugin["handleEditorPaste"](evt, editor as never);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(evt.defaultPrevented).toBe(true); // default (corrupting) paste suppressed
+    expect(editor.writes).toBe(0); // document untouched; the Notice fires in the UI layer
+  });
+
+  it("selection touching a separator line + table clipboard → preventDefault + blocked, zero writes", async () => {
+    const plugin = makePlugin();
+    // to sits on the separator row (line 1) → kind "invalid".
+    const editor = new MockEditor(
+      TABLE_DOC,
+      { line: 2, ch: 2 },
+      [
+        { line: 2, ch: 2 },
+        { line: 1, ch: 5 },
+      ],
+    );
+    const evt = fakeEvent({ html: EXCEL_MERGED_HTML });
+    plugin["handleEditorPaste"](evt, editor as never);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(evt.defaultPrevented).toBe(true);
+    expect(editor.writes).toBe(0);
+  });
+
+  it("cross-table selection + PLAIN TEXT clipboard → not intercepted (default paste harmless)", async () => {
+    const plugin = makePlugin();
+    const editor = new MockEditor(
+      TWO_TABLES_DOC,
+      { line: 2, ch: 2 },
+      [
+        { line: 2, ch: 2 },
+        { line: 6, ch: 2 },
+      ],
+    );
+    const evt = fakeEvent({ text: "just words" });
+    plugin["handleEditorPaste"](evt, editor as never);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(evt.defaultPrevented).toBe(false);
+    expect(editor.writes).toBe(0);
   });
 });

@@ -407,7 +407,21 @@ export default class TableMasterPlugin extends Plugin {
     } catch {
       return; // selection geometry unreadable → default paste
     }
-    if (sel.kind === "cross" || sel.kind === "invalid") return;
+    if (sel.kind === "cross" || sel.kind === "invalid") {
+      // WPS behaviour: a TABLE clipboard combined with an invalid selection
+      // (spanning two tables, leaving the table, or touching a separator
+      // line) is blocked with a notice — the default paste would corrupt
+      // the document with escaped-pipe text. A non-table clipboard still
+      // goes through the default paste untouched.
+      const data = evt.clipboardData;
+      const html = data?.getData("text/html") ?? "";
+      const text = data?.getData("text/plain") ?? "";
+      if (actions.parseClipboardModel({ html: html || undefined, text: text || undefined })) {
+        evt.preventDefault();
+        new Notice(t("notice.selectionCrossTable"));
+      }
+      return;
+    }
 
     const data = evt.clipboardData;
     if (!data) return;

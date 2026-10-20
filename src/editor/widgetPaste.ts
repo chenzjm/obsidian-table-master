@@ -18,6 +18,7 @@ import {
   parseClipboardModel,
   pasteModelIntoSelection,
   importModelNoSelection,
+  resolvePastePayload,
   type ClipboardPayload,
   type ClipboardImportResult,
   type ActionContext,
@@ -91,11 +92,16 @@ export function buildWidgetTablePasteExt(handlers: WidgetPasteHandlers) {
       }
 
       private onPaste(event: ClipboardEvent): void {
+        if (event.defaultPrevented) return;
+        // If the paste target is a table cell the user is editing that
+        // cell — leave the default behaviour alone (and keep the cache).
+        const target = event.target as HTMLElement | null;
+        if (target?.closest?.("td, th")) return;
+
         // Every markdown view runs its own copy of this plugin; the first
         // one that takes over sets defaultPrevented, the rest stand down
         // (and drop their stale cache too).
         const cached = this.cache.take();
-        if (event.defaultPrevented) return;
 
         const data = event.clipboardData;
         if (!data) return;
@@ -103,41 +109,67 @@ export function buildWidgetTablePasteExt(handlers: WidgetPasteHandlers) {
           html: data.getData("text/html") || undefined,
           text: data.getData("text/plain") || undefined,
         };
-        const parsed = parseClipboardModel(payload);
-        if (!parsed) return; // not a table → default paste
-
-        if (cached) {
-          const table = cached.table as HTMLTableElement | null;
-          if (!(table instanceof HTMLTableElement) || !table.isConnected) return;
-          // Drag-selected region plus a table clipboard: range paste.
+        if (payload.html) {
+          const parsed = parseClipboardModel(payload);
+          if (!parsed) return; // not a table → default paste
           event.preventDefault();
-          void pasteIntoWidgetTable(this.view, table, cached.rect, parsed.model, parsed.source, handlers);
+          this.dispatchPaste(cached, parsed.model, parsed.source);
           return;
         }
 
-        // No drag-selection. If the paste target is a table cell the user
-        // is editing that cell — leave the default behaviour alone. (The
-        // default pastes the clipboard text into the cell, which is the
-        // least surprising outcome while cell-editing.)
-        const target = event.target as HTMLElement | null;
-        if (target?.closest?.("td, th")) return;
+        // No HTML on the event (macOS Excel/WPS): the TSV text alone loses
+        // merged cells. Suppress the default, recover the rich payload from
+        // the system clipboard asynchronously, and fall back to a plain
+        // text insert when even that has no HTML table.
+        event.preventDefault();
+        void resolvePastePayload(data)
+          .then((resolved) => {
+            const parsed = parseClipboardModel(resolved);
+            if (parsed) {
+              this.dispatchPaste(cached, parsed.model, parsed.source);
+              return;
+            }
+            // Not a table after all → reproduce the default text paste.
+            if (resolved.text) this.defaultTextInsert(resolved.text);
+          })
+          .catch(() => {
+            if (payload.text) this.defaultTextInsert(payload.text);
+          });
+      }
 
-        // Otherwise this is a plain table paste over the editor surface:
-        // take over before Obsidian's default HTML paste mangles the
-        // spreadsheet into escaped pipe soup, and run the command-style
-        // import (cursor inside a table replaces it, else insert at cursor).
+      /** Run the resolved table paste for a cached or absent selection. */
+      private dispatchPaste(
+        cached: CachedTableSelection | null,
+        model: TableModel,
+        source: "html" | "tsv",
+      ): void {
+        if (cached) {
+          const table = cached.table as HTMLTableElement | null;
+          if (!(table instanceof HTMLTableElement) || !table.isConnected) return;
+          void pasteIntoWidgetTable(this.view, table, cached.rect, model, source, handlers);
+          return;
+        }
         const ctx = handlers.getActionContext(this.view);
         if (!ctx) {
           handlers.onFallbackError();
           return;
         }
-        event.preventDefault();
         try {
-          const result = importModelNoSelection(ctx, parsed.model, parsed.source);
+          const result = importModelNoSelection(ctx, model, source);
           handlers.onResult(result);
         } catch {
           handlers.onFallbackError();
         }
+      }
+
+      /** Reproduce the default plain-text paste at the editor caret. */
+      private defaultTextInsert(text: string): void {
+        const ctx = handlers.getActionContext(this.view);
+        if (!ctx) {
+          handlers.onFallbackError();
+          return;
+        }
+        ctx.editor.replaceSelection(text);
       }
 
       /** Resolve the current DOM selection into a cached table selection. */

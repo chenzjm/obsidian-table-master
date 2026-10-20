@@ -476,6 +476,29 @@ export function parseClipboardModel(
 }
 
 /**
+ * Build the paste payload from a paste event's clipboardData, recovering the
+ * rich HTML flavor when the event does not carry it.
+ *
+ * Why: on macOS, Excel and WPS frequently omit `text/html` from the
+ * synchronous `ClipboardEvent.clipboardData` while placing it on the system
+ * clipboard. Falling back to the TSV text then silently loses merged cells —
+ * a purely merged region exports as bare lines without tab padding, so a
+ * 2-column merged table degrades to a single-column one. When the event has
+ * no HTML we read the full clipboard asynchronously (`navigator.clipboard.read`,
+ * reliable inside Obsidian's Electron) before giving up.
+ */
+export async function resolvePastePayload(data: DataTransfer | null): Promise<ClipboardPayload> {
+  const sync: ClipboardPayload = {
+    html: data?.getData("text/html") || undefined,
+    text: data?.getData("text/plain") || undefined,
+  };
+  if (sync.html) return sync;
+  const asyncPayload = await readClipboardPayload();
+  if (asyncPayload?.html) return asyncPayload;
+  return sync;
+}
+
+/**
  * Paste an already-parsed clipboard model into a validated selection
  * rectangle (shared by the "Paste table from clipboard" command and the
  * Cmd/Ctrl+V editor-paste interception). When the caller has already

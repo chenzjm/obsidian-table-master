@@ -408,11 +408,43 @@ export default class TableMasterPlugin extends Plugin {
       html: data.getData("text/html") || undefined,
       text: data.getData("text/plain") || undefined,
     };
-    const parsed = actions.parseClipboardModel(payload);
-    if (!parsed) return; // not a table → default paste
+    if (payload.html) {
+      const parsed = actions.parseClipboardModel(payload);
+      if (!parsed) return; // not a table → default paste
+      evt.preventDefault();
+      this.runTablePaste(evt, editor, sel, parsed.model, parsed.source);
+      return;
+    }
 
-    // This is a table paste; suppress Obsidian's mangling default.
+    // No HTML on the event (macOS Excel/WPS): the TSV text alone loses
+    // merged cells. Suppress the default, recover the rich payload from the
+    // system clipboard asynchronously, and fall back to a plain text insert
+    // when even that has no HTML table.
     evt.preventDefault();
+    void actions
+      .resolvePastePayload(data)
+      .then((resolved) => {
+        const parsed = actions.parseClipboardModel(resolved);
+        if (parsed) {
+          this.runTablePaste(evt, editor, sel, parsed.model, parsed.source);
+          return;
+        }
+        // Not a table after all → reproduce the default text paste.
+        if (resolved.text) editor.replaceSelection(resolved.text);
+      })
+      .catch(() => {
+        if (payload.text) editor.replaceSelection(payload.text);
+      });
+  }
+
+  /** Shared tail of both interception paths once a table model is resolved. */
+  private runTablePaste(
+    _evt: ClipboardEvent,
+    editor: Editor,
+    sel: SelectionRect,
+    model: TableModel,
+    source: "html" | "tsv",
+  ): void {
     const ctx: actions.ActionContext = {
       app: this.app,
       editor,
@@ -420,14 +452,14 @@ export default class TableMasterPlugin extends Plugin {
     };
     if (sel.kind === "rect") {
       void actions
-        .pasteModelIntoSelection(ctx, parsed.model, parsed.source, sel)
+        .pasteModelIntoSelection(ctx, model, source, sel)
         .then((result) => this.notifyImportResult(result))
         .catch(() => new Notice(t("notice.importFailed")));
       return;
     }
     // No selection: command-style import (replace table / insert new one).
     try {
-      const result = actions.importModelNoSelection(ctx, parsed.model, parsed.source);
+      const result = actions.importModelNoSelection(ctx, model, source);
       this.notifyImportResult(result);
     } catch {
       new Notice(t("notice.importFailed"));

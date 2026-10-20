@@ -48,6 +48,11 @@ export interface WidgetPasteHandlers {
   onFallbackError: () => void;
 }
 
+/** TEMPORARY diagnostics for the Live Preview paste flow (prefix [TM-PASTE]). */
+const TM_DEBUG = (...args: unknown[]): void => {
+  console.debug("[TM-PASTE]", ...args);
+};
+
 export interface WidgetPasteView {
   /** The CM EditorView DOM root (listeners and table lookup scope). */
   dom: HTMLElement;
@@ -76,10 +81,14 @@ export class WidgetPasteController {
 
   private readonly listener = (event: Event): void => {
     switch (event.type) {
-      case "selectionchange":
-        this.cache.recordSelection(this.currentTableSelection());
+      case "selectionchange": {
+        const live = this.currentTableSelection();
+        TM_DEBUG("selectionchange →", live ? `rect r${live.rect.top}c${live.rect.left}-r${live.rect.bottom}c${live.rect.right}` : "no table selection");
+        this.cache.recordSelection(live);
         break;
+      }
       case "mousedown":
+        TM_DEBUG("mousedown → cache cleared");
         this.cache.onMouseDown();
         break;
       case "keydown":
@@ -111,16 +120,26 @@ export class WidgetPasteController {
   }
 
   private onPaste(event: ClipboardEvent): void {
+    const target = event.target as HTMLElement | null;
+    TM_DEBUG(
+      "paste event:",
+      "prevented=" + event.defaultPrevented,
+      "target=" + (target ? `${target.tagName}.${String(target.className).slice(0, 30)}` : "null"),
+      "inCell=" + !!target?.closest?.("td, th"),
+    );
     if (event.defaultPrevented) return;
 
     const data = event.clipboardData;
-    if (!data) return;
+    if (!data) {
+      TM_DEBUG("paste: no clipboardData → stand down");
+      return;
+    }
     const payload: ClipboardPayload = {
       html: data.getData("text/html") || undefined,
       text: data.getData("text/plain") || undefined,
     };
+    TM_DEBUG("paste payload:", payload.html ? `html ${payload.html.length}b` : "no html", payload.text ? `text "${payload.text.slice(0, 40).replace(/\t/g, "\\t")}"` : "no text");
 
-    const target = event.target as HTMLElement | null;
     const inCell = !!target?.closest?.("td, th");
 
     // Resolve the paste target selection from up to two sources:
@@ -135,7 +154,14 @@ export class WidgetPasteController {
     // replace the whole table.
     const cached = this.cache.take();
     const live = this.currentLiveSelection();
+    TM_DEBUG(
+      "selection sources:",
+      "live=" + live.status,
+      live.status === "rect" ? `live rect r${live.rect.top}c${live.rect.left}-r${live.rect.bottom}c${live.rect.right}` : "",
+      "cached=" + (cached ? `r${cached.rect.top}c${cached.rect.left}-r${cached.rect.bottom}c${cached.rect.right}` : "null"),
+    );
     if (live.status === "invalid") {
+      TM_DEBUG("→ BLOCK (cross-table / partial selection)");
       event.preventDefault();
       this.handlers.onResult({ kind: "blocked", reason: "crossTable" });
       return;
@@ -144,7 +170,11 @@ export class WidgetPasteController {
 
     if (payload.html) {
       const parsed = parseClipboardModel(payload);
-      if (!parsed) return; // not a table → default paste
+      if (!parsed) {
+        TM_DEBUG("→ not a table clipboard → default paste");
+        return; // not a table → default paste
+      }
+      TM_DEBUG(`→ TAKE OVER: ${parsed.source} table ${parsed.model.rows.length}x${parsed.model.cols}, selection=${selection ? "yes" : "no"}`);
       // A TABLE clipboard is always ours to handle, even when the paste
       // target sits inside a cell (focus stays in the first dragged cell
       // after a drag-selection). Standing down here lets Obsidian's native
@@ -163,7 +193,11 @@ export class WidgetPasteController {
     // the clipboard may be plain text. Otherwise take over: the async
     // recovery may still find a table, and a text-only clipboard falls
     // back to reproducing the default insert.
-    if (!selection && inCell) return;
+    if (!selection && inCell) {
+      TM_DEBUG("→ stand down: in-cell edit, no selection, no html (normal in-cell paste)");
+      return;
+    }
+    TM_DEBUG("→ TAKE OVER (async clipboard recovery)");
     event.preventDefault();
     void resolvePastePayload(data)
       .then((resolved) => {
@@ -173,9 +207,11 @@ export class WidgetPasteController {
           return;
         }
         // Not a table after all → reproduce the default text paste.
+        TM_DEBUG("async recovery: not a table → plain text insert");
         if (resolved.text) this.defaultTextInsert(resolved.text);
       })
-      .catch(() => {
+      .catch((err) => {
+        TM_DEBUG("async recovery failed:", err);
         if (payload.text) this.defaultTextInsert(payload.text);
       });
   }
@@ -188,19 +224,25 @@ export class WidgetPasteController {
   ): void {
     if (cached) {
       const table = cached.table as HTMLTableElement | null;
-      if (!(table instanceof HTMLTableElement) || !table.isConnected) return;
+      const ok = table instanceof HTMLTableElement && table.isConnected;
+      TM_DEBUG("dispatch: selection paste,", ok ? "table ok" : "TABLE INVALID (not connected / not a table element)");
+      if (!ok) return;
       void pasteIntoWidgetTable(this.view as unknown as EditorView, table, cached.rect, model, source, this.handlers);
       return;
     }
+    TM_DEBUG("dispatch: no selection → whole-table insert/replace path");
     const ctx = this.handlers.getActionContext(this.view as unknown as EditorView);
     if (!ctx) {
+      TM_DEBUG("dispatch: no action context → fallback error");
       this.handlers.onFallbackError();
       return;
     }
     try {
       const result = importModelNoSelection(ctx, model, source);
+      TM_DEBUG("dispatch: result =", result.kind);
       this.handlers.onResult(result);
-    } catch {
+    } catch (err) {
+      TM_DEBUG("dispatch: importModelNoSelection threw:", err);
       this.handlers.onFallbackError();
     }
   }
@@ -290,6 +332,7 @@ async function pasteIntoWidgetTable(
 ): Promise<void> {
   const ctx = handlers.getActionContext(view as unknown as EditorView);
   if (!ctx) {
+    TM_DEBUG("pasteIntoWidgetTable: no action context → fallback error");
     handlers.onFallbackError();
     return;
   }
@@ -300,6 +343,7 @@ async function pasteIntoWidgetTable(
   try {
     const pos = view.posAtDOM(table);
     const line = view.state.doc.lineAt(Math.max(0, Math.min(pos, view.state.doc.length))).number - 1;
+    TM_DEBUG("pasteIntoWidgetTable: table at source line", line);
     loc = locateTableIn(
       {
         getLine: (n: number) => view.state.doc.line(n + 1).text,
@@ -307,10 +351,12 @@ async function pasteIntoWidgetTable(
       },
       { line, ch: 0 },
     );
-  } catch {
+  } catch (err) {
+    TM_DEBUG("pasteIntoWidgetTable: posAtDOM/locateTableIn threw:", err);
     loc = null;
   }
   if (!loc) {
+    TM_DEBUG("pasteIntoWidgetTable: table NOT located in source → fallback error");
     handlers.onFallbackError();
     return;
   }
@@ -330,8 +376,10 @@ async function pasteIntoWidgetTable(
       },
       loc,
     );
+    TM_DEBUG("pasteModelIntoSelection result =", result.kind);
     handlers.onResult(result);
-  } catch {
+  } catch (err) {
+    TM_DEBUG("pasteModelIntoSelection threw:", err);
     handlers.onFallbackError();
   }
 }

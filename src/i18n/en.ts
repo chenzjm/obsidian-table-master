@@ -113,6 +113,9 @@ export const en = {
     "How merged cells are stored in the markdown. Extended uses MultiMarkdown syntax (^^ for rowspan, trailing ||| for colspan; same as Table Extended). HTML emits a <table> tag with colspan/rowspan.",
   "set.outputFormat.extended": "Extended (^^ / ||)",
   "set.outputFormat.html": "HTML",
+  "set.plainHeaderStyle": "Render header rows without bold",
+  "set.plainHeaderStyle.desc":
+    "Markdown tables always require a header row, which Obsidian renders bold by default. Enable to show headers at normal weight so tables pasted from Excel/WPS keep their original look.",
   "set.showToolbar": "Show floating toolbar",
   "set.showToolbar.desc": "Display the action bar above the active table.",
   "set.toolbarPosition": "Floating toolbar position",

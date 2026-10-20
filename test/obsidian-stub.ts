@@ -18,6 +18,26 @@ export class Modal {
 export class App {}
 export class Editor {}
 export class MarkdownView {}
+export class PluginSettingTab {
+  constructor(_app?: unknown, _plugin?: unknown) {}
+  display(): void {}
+  containerEl: unknown = null;
+}
+export class Setting {
+  constructor(_containerEl?: unknown) {}
+  setName(_name: unknown): this {
+    return this;
+  }
+  setDesc(_desc: unknown): this {
+    return this;
+  }
+  addDropdown(_cb: (dd: unknown) => unknown): this {
+    return this;
+  }
+  addToggle(_cb: (tg: unknown) => unknown): this {
+    return this;
+  }
+}
 export class Plugin {
   loadData(): Promise<null> {
     return Promise.resolve(null);

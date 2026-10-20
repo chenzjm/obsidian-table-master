@@ -1,7 +1,7 @@
 import { Editor, MarkdownView, Notice, Plugin } from "obsidian";
 import { Prec } from "@codemirror/state";
 import { keymap } from "@codemirror/view";
-import { DEFAULT_SETTINGS, TableMasterSettings, TableMasterSettingTab } from "./settings";
+import { DEFAULT_SETTINGS, TableMasterSettings, TableMasterSettingTab, applyPlainHeaderStyle } from "./settings";
 import { setLanguage, t } from "./i18n";
 import * as actions from "./editor/actions";
 import { getActionContext } from "./editor/contextHelper";
@@ -67,6 +67,7 @@ export default class TableMasterPlugin extends Plugin {
   private async bootstrap(): Promise<void> {
     await this.loadSettings();
     setLanguage(this.settings.language);
+    applyPlainHeaderStyle(document.body, this.settings.plainHeaderStyle);
 
     // Reading-view post-processor for merged cells
     this.registerMarkdownPostProcessor(

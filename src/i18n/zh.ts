@@ -109,6 +109,9 @@ export const zh: Dict = {
     "合并单元格在 Markdown 中的存储方式。Extended 使用 MultiMarkdown 语法（^^ 表示行合并，行尾 ||| 表示列合并；与 Table Extended 一致）。HTML 直接输出带 colspan/rowspan 的 <table>。",
   "set.outputFormat.extended": "Extended（^^ / ||）",
   "set.outputFormat.html": "HTML",
+  "set.plainHeaderStyle": "表头不加粗显示",
+  "set.plainHeaderStyle.desc":
+    "Markdown 表格必须有表头行，Obsidian 默认将其加粗渲染。开启后表头以常规字重显示，从 Excel/WPS 粘贴的数据表保持原样观感。",
   "set.showToolbar": "显示浮动工具栏",
   "set.showToolbar.desc": "在编辑器中显示用于操作表格的浮动工具栏。",
   "set.toolbarPosition": "浮动工具栏位置",

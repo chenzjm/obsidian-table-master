@@ -27,6 +27,8 @@ export interface TableMasterSettings {
   enableTabNavigation: boolean;
   defaultAlign: Align;
   language: LangChoice;
+  /** Render table header rows at normal weight (WYSIWYG for pasted data). */
+  plainHeaderStyle: boolean;
 }
 
 export const DEFAULT_SETTINGS: TableMasterSettings = {
@@ -36,7 +38,19 @@ export const DEFAULT_SETTINGS: TableMasterSettings = {
   enableTabNavigation: true,
   defaultAlign: "none",
   language: "auto",
+  plainHeaderStyle: true,
 };
+
+/**
+ * Toggle the `tm-plain-header` class on the document body. The class (see
+ * styles.css) renders table header rows at normal font weight so pasted
+ * spreadsheet data — whose first row is ordinary data, not a header — keeps
+ * the look it had in Excel/WPS. Markdown table syntax always requires a
+ * header row, so this is purely a presentation tweak.
+ */
+export function applyPlainHeaderStyle(body: { classList: { toggle(cls: string, on: boolean): void } }, enabled: boolean): void {
+  body.classList.toggle("tm-plain-header", enabled);
+}
 
 export class TableMasterSettingTab extends PluginSettingTab {
   plugin: TableMasterPlugin;
@@ -77,6 +91,18 @@ export class TableMasterSettingTab extends PluginSettingTab {
         dd.setValue(this.plugin.settings.outputFormat);
         dd.onChange(async (v) => {
           this.plugin.settings.outputFormat = v as OutputFormat;
+          await this.plugin.saveSettings();
+        });
+      });
+
+    new Setting(containerEl)
+      .setName(t("set.plainHeaderStyle"))
+      .setDesc(t("set.plainHeaderStyle.desc"))
+      .addToggle((tg) => {
+        tg.setValue(this.plugin.settings.plainHeaderStyle);
+        tg.onChange(async (v) => {
+          this.plugin.settings.plainHeaderStyle = v;
+          applyPlainHeaderStyle(document.body, v);
           await this.plugin.saveSettings();
         });
       });

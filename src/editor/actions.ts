@@ -569,11 +569,14 @@ async function confirmExpandPaste(
 }
 
 async function readClipboardPayload(): Promise<ClipboardPayload | null> {
+  /** Never let a stalled system clipboard read swallow the paste. */
+  const withTimeout = <T>(p: Promise<T>, ms = 400): Promise<T | null> =>
+    Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), ms))]);
   // Modern path: navigator.clipboard.read() exposes both text/html and text/plain.
   const nav = typeof navigator !== "undefined" ? navigator : null;
   if (nav && "clipboard" in nav && typeof (nav.clipboard as Clipboard & { read?: () => Promise<ClipboardItem[]> }).read === "function") {
     try {
-      const items = await nav.clipboard.read();
+      const items = await withTimeout(nav.clipboard.read());
       const out: ClipboardPayload = {};
       for (const item of items) {
         if (item.types.includes("text/html") && !out.html) {
@@ -593,7 +596,7 @@ async function readClipboardPayload(): Promise<ClipboardPayload | null> {
   // Fallback: text-only clipboard (loses Excel HTML envelope but TSV still works).
   if (nav && nav.clipboard && typeof nav.clipboard.readText === "function") {
     try {
-      const text = await nav.clipboard.readText();
+      const text = await withTimeout(nav.clipboard.readText());
       return text ? { text } : null;
     } catch {
       return null;

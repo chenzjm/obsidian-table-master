@@ -61,13 +61,12 @@ export function buildWidgetTablePasteExt(handlers: WidgetPasteHandlers) {
       }
 
       private handle(event: ClipboardEvent): void {
-        const target = event.target as HTMLElement | null;
-        const cell = target?.closest?.("td, th") as HTMLTableCellElement | null;
-        const table = cell?.closest("table") as HTMLTableElement | null;
-        if (!cell || !table) return; // not inside a table widget
-
-        const rect = domSelectionRectInTable(table);
-        if (!rect) return; // selection doesn't span cells → default paste
+        // Judge by the *DOM selection*, not by the paste target: while a
+        // rendered (non-editable) table is drag-selected the focus — and
+        // with it the paste target — stays on the plain editor surface, so
+        // a target-based check would never fire in Live Preview.
+        const found = domSelectionRect();
+        if (!found) return; // no cross-cell table selection → default paste
 
         const data = event.clipboardData;
         if (!data) return;
@@ -80,27 +79,29 @@ export function buildWidgetTablePasteExt(handlers: WidgetPasteHandlers) {
 
         // Both conditions met: take over the paste.
         event.preventDefault();
-        void pasteIntoWidgetTable(this.view, table, rect, parsed.model, parsed.source, handlers);
+        void pasteIntoWidgetTable(this.view, found.table, found.rect, parsed.model, parsed.source, handlers);
       }
     },
   );
 }
 
 /**
- * Compute the model-space rectangle covered by the current DOM selection,
- * or null when the selection is collapsed / outside this table / within a
- * single cell. Cell indexes map 1:1 to model coordinates because Obsidian
- * renders one `<td>` per source cell (merge placeholders included) and
- * Table Master only toggles attributes on them.
+ * Inspect the current DOM selection. When it spans at least two cells of the
+ * same rendered table widget, return that table plus the model-space
+ * rectangle covered (rowspan/colspan aware). Returns null otherwise.
+ *
+ * Cell indexes map 1:1 to model coordinates because Obsidian renders one
+ * `<td>` per source cell (merge placeholders included) and Table Master
+ * only toggles attributes on them.
  */
-export function domSelectionRectInTable(table: HTMLTableElement): WidgetSelectionRect | null {
-  const doc = table.ownerDocument;
-  const sel = doc.getSelection();
+export function domSelectionRect(): { table: HTMLTableElement; rect: WidgetSelectionRect } | null {
+  const sel = activeWindow.getSelection();
   if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
 
-  const start = nodeToCell(sel.anchorNode, table);
-  const end = nodeToCell(sel.focusNode, table);
+  const start = nodeToCell(sel.anchorNode);
+  const end = nodeToCell(sel.focusNode);
   if (!start || !end) return null;
+  if (start.table !== end.table) return null; // crosses tables / leaves it
   if (start.cell === end.cell) return null; // plain in-cell text selection
 
   // Expand anchor cells with rowspan/colspan so a selection that starts or
@@ -112,24 +113,28 @@ export function domSelectionRectInTable(table: HTMLTableElement): WidgetSelectio
   const s = span(start.cell);
   const e = span(end.cell);
   return {
-    top: Math.min(start.row, end.row),
-    left: Math.min(start.col, end.col),
-    bottom: Math.max(start.row + s.rows - 1, end.row + e.rows - 1),
-    right: Math.max(start.col + s.cols - 1, end.col + e.cols - 1),
+    table: start.table,
+    rect: {
+      top: Math.min(start.row, end.row),
+      left: Math.min(start.col, end.col),
+      bottom: Math.max(start.row + s.rows - 1, end.row + e.rows - 1),
+      right: Math.max(start.col + s.cols - 1, end.col + e.cols - 1),
+    },
   };
 }
 
 function nodeToCell(
   node: Node | null,
-  table: HTMLTableElement,
-): { cell: HTMLTableCellElement; row: number; col: number } | null {
+): { table: HTMLTableElement; cell: HTMLTableCellElement; row: number; col: number } | null {
   if (!node) return null;
   const el = (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement) as HTMLElement | null;
   const cell = el?.closest?.("td, th") as HTMLTableCellElement | null;
-  if (!cell || !table.contains(cell)) return null;
+  if (!cell) return null;
+  const table = cell.closest("table") as HTMLTableElement | null;
+  if (!table) return null;
   const tr = cell.closest("tr") as HTMLTableRowElement | null;
   if (!tr) return null;
-  return { cell, row: tr.rowIndex, col: cell.cellIndex };
+  return { table, cell, row: tr.rowIndex, col: cell.cellIndex };
 }
 
 async function pasteIntoWidgetTable(

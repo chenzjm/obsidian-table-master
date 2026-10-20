@@ -118,14 +118,29 @@ const MODIFIER_KEYS = new Set(["Shift", "Alt", "Meta", "Control", "Dead", "Proce
  * `take()` hands the selection to a paste and clears it (single use).
  */
 export class WidgetSelectionCache {
-  private cache: CachedTableSelection | null = null;
+  /** Rectangle from a DOM text selection (selectionchange listener). */
+  private textRect: CachedTableSelection | null = null;
+  /**
+   * Rectangle from the mouse-geometry tracker (mousedown → mouseup). Takes
+   * priority over textRect: the browser finalizes the text selection only
+   * AFTER mouseup fires, so the last selectionchange can still report the
+   * collapsed text rectangle even though the geometric one is correct.
+   */
+  private dragRect: CachedTableSelection | null = null;
 
-  recordSelection(found: CachedTableSelection | null): void {
-    if (found) this.cache = found;
+  /** Record the rectangle of a DOM text selection, if one exists. */
+  recordTextSelection(found: CachedTableSelection | null): void {
+    if (found) this.textRect = found;
+  }
+
+  /** Record the geometric rectangle of a mouse drag, if one was resolved. */
+  recordDragSelection(found: CachedTableSelection | null): void {
+    if (found) this.dragRect = found;
   }
 
   onMouseDown(): void {
-    this.cache = null;
+    this.textRect = null;
+    this.dragRect = null;
   }
 
   onKeydown(key: string, meta: boolean, ctrl: boolean, shift: boolean): void {
@@ -133,22 +148,81 @@ export class WidgetSelectionCache {
       const k = key.toLowerCase();
       if ((k === "v" || k === "c") && !shift) return; // paste / copy shortcut
       if (k === "meta" || k === "control") return; // bare modifier press
-      this.cache = null;
+      this.textRect = null;
+      this.dragRect = null;
       return;
     }
     if (MODIFIER_KEYS.has(key)) return;
-    this.cache = null; // typing / arrows / Esc / Enter … end the selection
+    this.textRect = null; // typing / arrows / Esc / Enter … end the selection
+    this.dragRect = null;
   }
 
-  /** Read and clear (single consumption). */
+  /** Read and clear (single consumption). The drag rectangle wins. */
   take(): CachedTableSelection | null {
-    const c = this.cache;
-    this.cache = null;
-    return c;
+    const r = this.dragRect ?? this.textRect;
+    this.textRect = null;
+    this.dragRect = null;
+    return r;
   }
 
   /** Read without clearing (diagnostics / tests). */
   peek(): CachedTableSelection | null {
-    return this.cache;
+    return this.dragRect ?? this.textRect;
+  }
+}
+
+/**
+ * Tracks a mouse drag over a rendered table so EMPTY cells can anchor a
+ * selection. A DOM text selection can only start/end at text nodes, so
+ * dragging across blank cells (the common case in a sparse sheet) collapses
+ * the reported rectangle to the last column that happens to contain text —
+ * the user visually boxed 5 columns, the DOM said 1. Mouse events, in
+ * contrast, fire on real <td> elements regardless of content: record the
+ * cell under mousedown, resolve the cell under mouseup via a hit test, and
+ * let the paste path prefer this geometric rectangle.
+ */
+export class DragCellTracker {
+  private start: CellInfo | null = null;
+  private pending = false;
+
+  /** mousedown: remember the cell under the pointer (may be empty). */
+  onMouseDown(cell: CellInfo | null): void {
+    this.start = cell;
+    this.pending = cell !== null;
+  }
+
+  /** Whether a drag that started inside a table is in flight. */
+  get active(): boolean {
+    return this.pending;
+  }
+
+  /**
+   * mouseup: resolve the rectangle from the start cell to the cell at the
+   * pointer position. Returns null when no drag is pending, the start was
+   * outside a table, or the end hit-test misses the same table (the plain
+   * text-selection path stays authoritative then).
+   */
+  onMouseUp(endCell: CellInfo | null): CachedTableSelection | null {
+    const start = this.start;
+    this.start = null;
+    this.pending = false;
+    if (!start || !endCell) return null;
+    if (start.table !== endCell.table) return null;
+    if (start.row === endCell.row && start.col === endCell.col) return null;
+    return {
+      table: start.table,
+      rect: {
+        top: Math.min(start.row, endCell.row),
+        left: Math.min(start.col, endCell.col),
+        bottom: Math.max(start.row + start.rows - 1, endCell.row + endCell.rows - 1),
+        right: Math.max(start.col + start.cols - 1, endCell.col + endCell.cols - 1),
+      },
+    };
+  }
+
+  /** Drop any pending drag (pointer left the window, Esc, …). */
+  reset(): void {
+    this.start = null;
+    this.pending = false;
   }
 }

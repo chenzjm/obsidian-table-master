@@ -86,8 +86,7 @@ function buildTableDom(root: HTMLElement, doc: Document): { cellA: HTMLElement; 
 }
 
 /** Editor mock that records writes into DOC_LINES (same as other suites). */
-function makeEditor() {
-  const lines = [...DOC_LINES];
+function makeEditor(lines: string[] = [...DOC_LINES]) {
   return {
     lines,
     writes: 0,
@@ -126,6 +125,114 @@ function makeController(view: WidgetPasteView, editor: ReturnType<typeof makeEdi
 }
 
 const EXCEL_HTML = '<table><tr><td>X1</td><td>X2</td></tr><tr><td>Y1</td><td>Y2</td></tr></table>';
+
+describe("user report: drag across EMPTY cells collapses the rectangle (6x1 instead of 6x5)", () => {
+  // The real document from the report: 6 rows × 7 columns, rendered FLAT
+  // (no rowSpan/colSpan — the plugin ships no merge renderer), almost all
+  // cells EMPTY. A DOM text selection can only anchor at text nodes, so the
+  // drag from (0,0) to (5,4) collapsed to the last column holding text →
+  // the dialog said "6 行 × 1 列" while the user had boxed 5 columns.
+  function buildSparseTable(doc: Document) {
+    const wrap = doc.createElement("div");
+    wrap.className = "cm-line";
+    const table = doc.createElement("table");
+    const row = (cells: string[], head = false) => {
+      const tr = doc.createElement("tr");
+      for (const text of cells) {
+        const el = doc.createElement(head ? "th" : "td");
+        if (text) el.textContent = text;
+        tr.appendChild(el);
+      }
+      table.appendChild(tr);
+    };
+    row(["测试测试1", "<", "", "", "", "", ""], true);
+    row(["测试", "<", "测试3", "测试4", "", "", ""]);
+    row(["", "", "测试", "测试", "", "", ""]);
+    row(["", "", "", "", "", "", "测试"]);
+    row(["", "", "", "", "", "", "测试"]);
+    row(["", "", "", "", "", "", ""]);
+    wrap.appendChild(table);
+    return { wrap, table };
+  }
+
+  it("mouse drag from (0,0) to an EMPTY cell (5,4) → rect 6 rows × 5 cols, 4×5 clip pastes at the anchor", async () => {
+    const doc = window.document;
+    doc.body.innerHTML = "";
+    // CM document mirrors the sparse 7-column table the user really has.
+    const sparseLines = [
+      "| 测试测试1 | < |  |  |  |  |  |",
+      "| --- | --- | --- | --- | --- | --- | --- |",
+      "| 测试 | < | 测试3 | 测试4 |  |  |  |",
+      "|  |  | 测试 | 测试 |  |  |  |",
+      "|  |  |  |  |  |  | 测试 |",
+      "|  |  |  |  |  |  | 测试 |",
+    ];
+    const { view, root } = makeView(doc, sparseLines);
+    const { wrap, table } = buildSparseTable(doc);
+    root.appendChild(wrap);
+
+    const editor = makeEditor(sparseLines);
+    const made = makeController(view, editor);
+
+    const th00 = table.querySelector("th") as HTMLTableCellElement; // (0,0)
+    const tds = table.querySelectorAll("td");
+    const endEmpty = tds[7 * 4 + 4] as HTMLTableCellElement; // table row 5 (data row 4), col 4 — EMPTY
+
+    // Mouse drag: down on the first header cell, up over the empty cell.
+    th00.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: 10, clientY: 10 }));
+    const hit = vi.spyOn(doc, "elementFromPoint").mockReturnValue(endEmpty);
+    doc.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 200, clientY: 150 }));
+    hit.mockRestore();
+    // The browser finalizes the text selection only AFTER mouseup: the DOM
+    // selection stays collapsed on column 0 (empty cells cannot anchor it)
+    // and its selectionchange would record the WRONG 6×1 rectangle…
+    const sel = window.getSelection();
+    const range = doc.createRange();
+    range.selectNodeContents(th00.firstChild!);
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    const lastTd = tds[0] as HTMLTableCellElement; // row 0 col 0 — text exists here
+    sel?.extend(lastTd.firstChild!, 1);
+    doc.dispatchEvent(new Event("selectionchange"));
+    // …but the geometric 6×5 rectangle has priority at paste time.
+
+    const clip4x5 =
+      "<table><tr><td>A1</td><td>A2</td><td>A3</td><td>A4</td><td>A5</td></tr>" +
+      "<tr><td>B1</td><td>B2</td><td>B3</td><td>B4</td><td>B5</td></tr>" +
+      "<tr><td>C1</td><td>C2</td><td>C3</td><td>C4</td><td>C5</td></tr>" +
+      "<tr><td>D1</td><td>D2</td><td>D3</td><td>D4</td><td>D5</td></tr></table>";
+    firePaste(doc, doc.body, { html: clip4x5 });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(made.results[0]).toMatchObject({ kind: "pasted", rows: 4, cols: 5, selRows: 6, selCols: 5 });
+    const text = editor.text();
+    expect(text).toContain("A1");
+    expect(text).toContain("D5"); // bottom-right of the clip landed at (3,4)
+  });
+
+  it("plain CLICK (down+up on the same cell) records nothing — normal editing unaffected", async () => {
+    const doc = window.document;
+    doc.body.innerHTML = "";
+    const { view, root } = makeView(doc);
+    const { table } = buildSparseTable(doc);
+    root.appendChild(table);
+
+    const editor = makeEditor();
+    const made = makeController(view, editor);
+    const td = table.querySelector("th") as HTMLTableCellElement;
+    const hit = vi.spyOn(doc, "elementFromPoint").mockReturnValue(td);
+
+    td.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: 5, clientY: 5 }));
+    doc.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 5, clientY: 5 }));
+    hit.mockRestore();
+    firePaste(doc, doc.body, { html: EXCEL_HTML });
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Single-cell "drag" is not a selection → interceptor stands down.
+    expect(made.results).toHaveLength(0);
+    expect(editor.writes).toBe(0);
+  });
+});
 
 describe("user report: multi-column selection, notice always says one column", () => {
   it("3×3 drag-selection + 1-column clipboard → rect must be 3×3, paste covers the first column only, result rows=3 cols=1", async () => {

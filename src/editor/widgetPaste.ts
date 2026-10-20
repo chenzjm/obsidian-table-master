@@ -25,6 +25,7 @@ import {
 } from "./actions";
 import {
   WidgetSelectionCache,
+  DragCellTracker,
   rectFromCellInfos,
   logicalCellPosition,
   type CellInfo,
@@ -79,19 +80,45 @@ export class WidgetPasteController {
   private readonly view: WidgetPasteView;
   private readonly doc: Document;
   private readonly cache = new WidgetSelectionCache();
+  private readonly dragTracker = new DragCellTracker();
 
   private readonly listener = (event: Event): void => {
     switch (event.type) {
       case "selectionchange": {
         const live = this.currentTableSelection();
         TM_DEBUG("selectionchange →", live ? `rect r${live.rect.top}c${live.rect.left}-r${live.rect.bottom}c${live.rect.right}` : "no table selection");
-        this.cache.recordSelection(live);
+        this.cache.recordTextSelection(live);
         break;
       }
-      case "mousedown":
-        TM_DEBUG("mousedown → cache cleared");
+      case "mousedown": {
+        const target = event.target as HTMLElement | null;
+        const td = target?.closest?.("td, th") as HTMLTableCellElement | null;
+        const table = (td?.closest("table") as HTMLTableElement | null) ?? null;
+        const cell = td && table ? logicalCellPosition(table, td) : null;
         this.cache.onMouseDown();
+        this.dragTracker.onMouseDown(cell);
+        TM_DEBUG("mousedown → cache cleared, drag start:", cell ? `r${cell.row}c${cell.col}` : "outside table");
         break;
+      }
+      case "mouseup": {
+        // Resolve the drag rectangle geometrically: empty cells carry no
+        // text nodes, so a DOM selection collapses to the last column with
+        // text — the mouse hit test sees the real cells.
+        if (!this.dragTracker.active) break;
+        const e = event as MouseEvent;
+        const el = this.doc.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+        const td = el?.closest?.("td, th") as HTMLTableCellElement | null;
+        const table = (td?.closest("table") as HTMLTableElement | null) ?? null;
+        const endCell = td && table ? logicalCellPosition(table, td) : null;
+        const dragRect = this.dragTracker.onMouseUp(endCell);
+        if (dragRect) {
+          TM_DEBUG(`mouseup → drag rect r${dragRect.rect.top}c${dragRect.rect.left}-r${dragRect.rect.bottom}c${dragRect.rect.right} (overrides text selection)`);
+          this.cache.recordDragSelection(dragRect);
+        } else {
+          TM_DEBUG("mouseup → drag tracker yielded no rectangle");
+        }
+        break;
+      }
       case "keydown":
         this.cache.onKeydown(
           (event as KeyboardEvent).key,
@@ -109,13 +136,13 @@ export class WidgetPasteController {
   constructor(view: WidgetPasteView, private readonly handlers: WidgetPasteHandlers) {
     this.view = view;
     this.doc = view.dom.ownerDocument;
-    for (const type of ["selectionchange", "mousedown", "keydown", "paste"]) {
+    for (const type of ["selectionchange", "mousedown", "mouseup", "keydown", "paste"]) {
       this.doc.addEventListener(type, this.listener, true);
     }
   }
 
   destroy(): void {
-    for (const type of ["selectionchange", "mousedown", "keydown", "paste"]) {
+    for (const type of ["selectionchange", "mousedown", "mouseup", "keydown", "paste"]) {
       this.doc.removeEventListener(type, this.listener, true);
     }
   }
@@ -164,13 +191,18 @@ export class WidgetPasteController {
       this.handlers.onResult({ kind: "blocked", reason: "crossTable" });
       return;
     }
-    const selection =
-      live.status === "rect" ? { table: live.table, rect: live.rect } : cached;
+    // The GEOMETRIC drag rectangle wins over the live DOM text selection:
+    // empty cells carry no text nodes, so a drag across a sparse sheet
+    // collapses its text selection to the last column containing text,
+    // while the mousedown/mouseup hit test saw the real cells. The text
+    // selection is only the fallback for keyboard selections and drags
+    // whose mouseup landed outside the table.
+    const selection = cached ?? (live.status === "rect" ? { table: live.table, rect: live.rect } : null);
     TM_DEBUG(
       "selection sources:",
       "live=" + live.status,
       live.status === "rect" ? `live rect r${live.rect.top}c${live.rect.left}-r${live.rect.bottom}c${live.rect.right}` : "",
-      "cached=" + (live.status !== "rect" && cached ? `r${cached.rect.top}c${cached.rect.left}-r${cached.rect.bottom}c${cached.rect.right}` : "n/a"),
+      "cached=" + (cached ? `r${cached.rect.top}c${cached.rect.left}-r${cached.rect.bottom}c${cached.rect.right}` : "n/a"),
     );
     if (!selection) {
       TM_DEBUG("→ stand down: no widget-table selection → editor-paste handler owns this paste");

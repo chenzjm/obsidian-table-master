@@ -385,6 +385,9 @@ export type ClipboardImportResult =
       cols: number;
       rowsAdded: number;
       colsAdded: number;
+      /** Target selection size, reported alongside the pasted block size. */
+      selRows: number;
+      selCols: number;
     }
   | { kind: "blocked"; reason: "crossTable" | "invalidLine" | "partialMerge" }
   | { kind: "cancelled" }
@@ -543,6 +546,8 @@ export async function pasteModelIntoSelection(
     cols: out.cols,
     rowsAdded: out.rowsAdded,
     colsAdded: out.colsAdded,
+    selRows,
+    selCols,
   };
 }
 

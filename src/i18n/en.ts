@@ -93,7 +93,7 @@ export const en = {
     "Table Master detected conflicting plugins: {plugins}. Disable them for the best experience.",
   "notice.importNoTable": "Clipboard does not contain a recognizable table.",
   "notice.importDone": "Imported table from clipboard ({source}).",
-  "notice.importPasted": "Pasted {rows}×{cols} into the selection ({source}).",
+  "notice.importPasted": "Pasted the clipboard table ({rows} rows × {cols} cols) into the selection ({selRows} rows × {selCols} cols) — {source}.",
   "notice.importCancelled": "Paste cancelled.",
   "notice.importFailed": "Could not read clipboard. Try again or paste manually.",
   "notice.selectionCrossTable": "Selection must stay inside a single table to paste into a region.",

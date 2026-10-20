@@ -11,6 +11,11 @@ import {
 } from "./actions";
 import { parseTable } from "../table/parser";
 import type { TableModel } from "../table/model";
+import { setLanguage } from "../i18n";
+
+// The user-facing copy tests assert the zh strings (the approved spec
+// format); pin the language instead of relying on the auto-detected locale.
+setLanguage("zh");
 
 vi.mock("../ui/confirmDialog", () => ({
   confirmDialog: vi.fn().mockResolvedValue(true), // approve expand pastes by default
@@ -143,6 +148,9 @@ describe("pasteModelIntoSelection (range paste write-back)", () => {
     expect(result.cols).toBe(1);
     expect(result.rowsAdded).toBe(0);
     expect(result.colsAdded).toBe(0);
+    // Selection size is reported alongside the pasted block size (notice).
+    expect(result.selRows).toBe(2);
+    expect(result.selCols).toBe(2);
     // Column 0 of the region got the clip; column 1 is untouched.
     expect(editor.lines[2]).toContain("NEW");
     expect(editor.lines[3]).toContain("x");
@@ -216,5 +224,80 @@ describe("pasteModelIntoSelection (range paste write-back)", () => {
     const blocked = await pasteModelIntoSelection(ctxFor(editor), clip, "html", sel);
     expect(blocked).toEqual({ kind: "blocked", reason: "partialMerge" });
     expect(editor.text()).toBe(doc.join("\n")); // untouched
+  });
+
+  it("flattens a fully covered merge: every cell becomes a plain anchor (WPS rule)", async () => {
+    const doc = [
+      "| H1 | H2 | H3 |",
+      "| --- | --- | --- |",
+      "| A | B | C |",
+      "| ^^ | ^^ | D |",
+    ];
+    const editor = new MockEditor(doc, { line: 2, ch: 2 });
+    const sel = { kind: "rect" as const, startLine: 0, endLine: 3, top: 1, bottom: 2, left: 0, right: 1 };
+    const result = await pasteModelIntoSelection(
+      ctxFor(editor),
+      modelOf("| X | Y |\n| --- | --- |\n| 1 | 2 |"),
+      "html",
+      sel,
+    );
+    expect(result.kind).toBe("pasted");
+    // The 2x2 merge region is fully rewritten: placeholders gone, no `^^`.
+    expect(editor.lines[2]).toContain("X");
+    expect(editor.lines[3]).toContain("1");
+    expect(editor.lines[3]).not.toContain("^^");
+    expect(editor.text()).not.toContain("<");
+  });
+
+  it("asks for confirmation when a multi-cell selection would be expanded, with accurate sizes", async () => {
+    const { confirmDialog } = await import("../ui/confirmDialog");
+    const editor = new MockEditor(DOC, { line: 2, ch: 2 });
+    // 2x2 selection, 3x3 clip → both dimensions expand → must ask first.
+    const sel = { kind: "rect" as const, startLine: 0, endLine: 3, top: 1, bottom: 2, left: 0, right: 1 };
+    const result = await pasteModelIntoSelection(
+      ctxFor(editor),
+      modelOf("| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n| 4 | 5 | 6 |\n| 7 | 8 | 9 |"),
+      "html",
+      sel,
+    );
+    expect(result.kind).toBe("pasted");
+    // The dialog body must carry accurate selection AND clip sizes
+    // (行/列 format from the approved spec). The clip model holds a header
+    // row + 3 data rows = 4 rows.
+    expect(confirmDialog).toHaveBeenCalledWith(
+      expect.anything(),
+      "扩展表格",
+      "剪贴板表格（4 行 × 3 列）大于选区（2 行 × 2 列），将从选区左上角粘贴并按需扩展表格。是否继续？",
+      "粘贴",
+    );
+  });
+
+  it("cancels without touching the document when the user declines the expansion", async () => {
+    const { confirmDialog } = await import("../ui/confirmDialog");
+    (confirmDialog as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false);
+    const editor = new MockEditor(DOC, { line: 2, ch: 2 });
+    const sel = { kind: "rect" as const, startLine: 0, endLine: 3, top: 1, bottom: 2, left: 0, right: 1 };
+    const result = await pasteModelIntoSelection(
+      ctxFor(editor),
+      modelOf("| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n| 4 | 5 | 6 |\n| 7 | 8 | 9 |"),
+      "html",
+      sel,
+    );
+    expect(result).toEqual({ kind: "cancelled" });
+    expect(editor.text()).toBe(DOC.join("\n")); // untouched
+  });
+});
+
+describe("notice copy (user-facing format)", () => {
+  it("importPasted renders both the pasted block and the selection sizes, 行/列 format", async () => {
+    const { t } = await import("../i18n");
+    const text = t("notice.importPasted", {
+      rows: "3",
+      cols: "1",
+      selRows: "3",
+      selCols: "3",
+      source: "HTML",
+    });
+    expect(text).toBe("已将剪贴板表格（3 行 × 1 列）粘贴到选区（3 行 × 3 列）——HTML。");
   });
 });

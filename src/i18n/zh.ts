@@ -90,7 +90,7 @@ export const zh: Dict = {
     "Table Master 检测到冲突插件：{plugins}。建议禁用以获得最佳体验。",
   "notice.importNoTable": "剪贴板中未识别到表格。",
   "notice.importDone": "已从剪贴板导入表格（{source}）。",
-  "notice.importPasted": "已粘贴 {rows}×{cols} 到选区（{source}）。",
+  "notice.importPasted": "已将剪贴板表格（{rows} 行 × {cols} 列）粘贴到选区（{selRows} 行 × {selCols} 列）——{source}。",
   "notice.importCancelled": "已取消粘贴。",
   "notice.importFailed": "读取剪贴板失败，请重试或手动粘贴。",
   "notice.selectionCrossTable": "选区必须完全位于同一表格内，无法执行选区粘贴。",

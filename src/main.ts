@@ -371,6 +371,8 @@ export default class TableMasterPlugin extends Plugin {
           t("notice.importPasted", {
             rows: String(result.rows),
             cols: String(result.cols),
+            selRows: String(result.selRows),
+            selCols: String(result.selCols),
             source: srcLabel(result.source),
           }),
         );

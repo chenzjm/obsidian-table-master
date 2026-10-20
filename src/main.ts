@@ -6,6 +6,7 @@ import { setLanguage, t } from "./i18n";
 import * as actions from "./editor/actions";
 import { getActionContext } from "./editor/contextHelper";
 import { locateTable, getSelectionRectIn, type SelectionRect } from "./editor/tableLocator";
+import { buildWidgetTablePasteExt } from "./editor/widgetPaste";
 import { parseTable } from "./table/parser";
 import { serialize } from "./table/serializer";
 import { navigateCell, navigateRowEnter } from "./editor/cellNavigator";
@@ -129,6 +130,23 @@ export default class TableMasterPlugin extends Plugin {
     registerContextMenu(this);
     this.registerEditorExtension(
       buildTableWidgetContextMenuExt({ getPlugin: () => this }),
+    );
+
+    // Live Preview Cmd/Ctrl+V range paste. Obsidian's table widgets swallow
+    // pastes before the `editor-paste` event fires, so intercept them at the
+    // CM DOM level instead: a DOM selection spanning 2+ cells of the same
+    // table plus a table clipboard becomes a range paste.
+    this.registerEditorExtension(
+      buildWidgetTablePasteExt({
+        getActionContext: () => {
+          const editor = this.app.workspace.getActiveViewOfType(MarkdownView)?.editor;
+          return editor
+            ? { app: this.app, editor, format: this.settings.outputFormat }
+            : null;
+        },
+        onResult: (result) => this.notifyImportResult(result),
+        onFallbackError: () => new Notice(t("notice.importFailed")),
+      }),
     );
 
     // When the user switches between markdown leaves (split panes, hover

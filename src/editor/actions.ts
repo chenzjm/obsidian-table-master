@@ -457,19 +457,22 @@ export function parseClipboardModel(
 /**
  * Paste an already-parsed clipboard model into a validated selection
  * rectangle (shared by the "Paste table from clipboard" command and the
- * Cmd/Ctrl+V editor-paste interception).
+ * Cmd/Ctrl+V editor-paste interception). When the caller has already
+ * resolved the target table's location (Live Preview widget path), pass it
+ * via `loc` to avoid depending on the CM cursor position.
  */
 export async function pasteModelIntoSelection(
   ctx: ActionContext,
   clip: TableModel,
   source: "html" | "tsv",
   sel: Extract<SelectionRect, { kind: "rect" }>,
+  loc?: TableLocation,
 ): Promise<ClipboardImportResult> {
-  const loc = locateTable(ctx.editor, ctx.editor.getCursor("from"));
-  if (!loc) return { kind: "blocked", reason: "crossTable" };
-  let target: TableModel;
+  const target = loc ?? locateTable(ctx.editor, ctx.editor.getCursor("from"));
+  if (!target) return { kind: "blocked", reason: "crossTable" };
+  let model: TableModel;
   try {
-    target = parseTable(loc.text).model;
+    model = parseTable(target.text).model;
   } catch {
     return { kind: "blocked", reason: "crossTable" };
   }
@@ -486,9 +489,9 @@ export async function pasteModelIntoSelection(
     if (!ok) return { kind: "cancelled" };
   }
 
-  const out = ops.pasteRange(target, clip, sel.top, sel.left);
+  const out = ops.pasteRange(model, clip, sel.top, sel.left);
   if (!out) return { kind: "blocked", reason: "partialMerge" };
-  applyModel(ctx, loc, out.model, { row: sel.top, col: sel.left });
+  applyModel(ctx, target, out.model, { row: sel.top, col: sel.left });
   return {
     kind: "pasted",
     source,

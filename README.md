@@ -99,6 +99,12 @@ Copy a range from Excel, Google Sheets, Numbers, or any web page that contains a
 
 The header row can be pasted into; after pasting the cursor lands on the region's top-left cell, and the whole paste is a single undo step.
 
+**v0.3.0 behavior fixes** (pre-merge review):
+
+1. **Version bump** 0.2.1 → 0.3.0 (manifest.json / package.json / versions.json kept in sync).
+2. **Global header style removed**: the plugin no longer restyles the `th` weight of every Markdown table in the vault — headers render with Obsidian's native styling again. Weights now only apply to plugin-owned surfaces (`table.tm-rendered` / `table.tm-grid`).
+3. **Take over paste only after confirming a table**: the paste interceptors must synchronously confirm the clipboard really is a table (a rich HTML `<table>`, or an Excel/WPS **rectangular TSV grid** — ≥2 rows, consistent column count, ≥2 columns) BEFORE any `preventDefault()`. Non-table clipboards (prose, code...) always go through Obsidian's native paste flow — no interception, no simulated inserts, other plugins and the core paste pipeline are untouched.
+
 ## Installation
 
 ### From source

@@ -9,6 +9,7 @@ import { locateTable, getSelectionRectIn, type SelectionRect } from "./editor/ta
 import { buildWidgetTablePasteExt } from "./editor/widgetPaste";
 import { parseTable } from "./table/parser";
 import { serialize } from "./table/serializer";
+import { looksLikeTsvTable } from "./table/tsvImporter";
 import { navigateCell, navigateRowEnter } from "./editor/cellNavigator";
 import { buildFloatingToolbarExt } from "./ui/floatingToolbar";
 import { registerContextMenu } from "./ui/contextMenu";
@@ -413,12 +414,11 @@ export default class TableMasterPlugin extends Plugin {
       // WPS behaviour: a TABLE clipboard combined with an invalid selection
       // (spanning two tables, leaving the table, or touching a separator
       // line) is blocked with a notice — the default paste would corrupt
-      // the document with escaped-pipe text. A non-table clipboard still
-      // goes through the default paste untouched.
+      // the document with escaped-pipe text. The clipboard is confirmed
+      // synchronously BEFORE any preventDefault; a non-table clipboard
+      // still goes through the default paste untouched.
       const data = evt.clipboardData;
-      const html = data?.getData("text/html") ?? "";
-      const text = data?.getData("text/plain") ?? "";
-      if (actions.parseClipboardModel({ html: html || undefined, text: text || undefined })) {
+      if (data && actions.clipboardLooksLikeTable(data)) {
         evt.preventDefault();
         new Notice(t("notice.selectionCrossTable"));
       }
@@ -439,10 +439,12 @@ export default class TableMasterPlugin extends Plugin {
       return;
     }
 
-    // No HTML on the event (macOS Excel/WPS): the TSV text alone loses
-    // merged cells. Suppress the default, recover the rich payload from the
-    // system clipboard asynchronously, and fall back to a plain text insert
-    // when even that has no HTML table.
+    // No HTML on the event (macOS Excel/WPS omit it). Taking over means
+    // suppress the default NOW — which is only acceptable once we have
+    // synchronously confirmed a spreadsheet-shaped clipboard (rectangular
+    // TSV grid). Anything else keeps the native paste flow: Obsidian core
+    // and other plugins keep full control of plain-text pastes.
+    if (!payload.text || !looksLikeTsvTable(payload.text)) return; // native paste
     evt.preventDefault();
     void actions
       .resolvePastePayload(data)
@@ -452,7 +454,8 @@ export default class TableMasterPlugin extends Plugin {
           this.runTablePaste(evt, editor, sel, parsed.model, parsed.source);
           return;
         }
-        // Not a table after all → reproduce the default text paste.
+        // TSV-shaped but no table anywhere (system clipboard lost the rich
+        // flavor too) → the closest native equivalent is a plain text insert.
         if (resolved.text) editor.replaceSelection(resolved.text);
       })
       .catch(() => {

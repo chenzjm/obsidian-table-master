@@ -13,6 +13,7 @@
 
 import { EditorView, ViewPlugin, PluginValue } from "@codemirror/view";
 import type { TableModel } from "../table/model";
+import { looksLikeTsvTable } from "../table/tsvImporter";
 import { locateTableIn, type TableLocation } from "./tableLocator";
 import {
   parseClipboardModel,
@@ -186,9 +187,15 @@ export class WidgetPasteController {
       // A selection partially inside a table (dragged past the table edge
       // or spanning two tables) is blocked with a notice, never silently
       // treated as "no selection" — that used to replace the whole table.
-      TM_DEBUG("→ BLOCK (cross-table / partial selection)");
-      event.preventDefault();
-      this.handlers.onResult({ kind: "blocked", reason: "crossTable" });
+      // Only a TABLE clipboard is blocked (WPS spec); a non-table clipboard
+      // keeps the native paste flow untouched.
+      if (payload.html || (payload.text && looksLikeTsvTable(payload.text))) {
+        TM_DEBUG("→ BLOCK (cross-table / partial selection, table clipboard)");
+        event.preventDefault();
+        this.handlers.onResult({ kind: "blocked", reason: "crossTable" });
+      } else {
+        TM_DEBUG("→ stand down: invalid selection but non-table clipboard → native paste");
+      }
       return;
     }
     // The GEOMETRIC drag rectangle wins over the live DOM text selection:
@@ -225,10 +232,15 @@ export class WidgetPasteController {
       return;
     }
 
-    // No HTML on the event (macOS Excel/WPS): recover the rich payload
-    // asynchronously. The selection is only consumable right now (the
-    // widget rebuilds after the paste), so we take over even without HTML;
-    // a text-only clipboard falls back to reproducing the default insert.
+    // No HTML on the event (macOS Excel/WPS omit it). Taking over the
+    // selection means suppress the default NOW — only acceptable once a
+    // rectangular TSV grid is synchronously confirmed. Text-only clipboards
+    // (prose, code) keep the native paste flow; the editor-paste handler
+    // applies the same rule on its side.
+    if (!payload.text || !looksLikeTsvTable(payload.text)) {
+      TM_DEBUG("→ stand down: text-only clipboard, not a TSV grid → native paste");
+      return;
+    }
     TM_DEBUG("→ TAKE OVER (async clipboard recovery, range paste)");
     event.preventDefault();
     void resolvePastePayload(data)
@@ -238,7 +250,7 @@ export class WidgetPasteController {
           this.dispatchPaste(selection, parsed.model, parsed.source);
           return;
         }
-        // Not a table after all → reproduce the default text paste.
+        // TSV-shaped but no table anywhere → closest native equivalent.
         TM_DEBUG("async recovery: not a table → plain text insert");
         if (resolved.text) this.defaultTextInsert(resolved.text);
       })

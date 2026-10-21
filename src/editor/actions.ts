@@ -9,7 +9,7 @@ import { serialize, OutputFormat } from "../table/serializer";
 import { TableModel, anchorOf, emptyModel } from "../table/model";
 import * as ops from "../table/ops";
 import { importHtmlTable } from "../table/htmlImporter";
-import { importTsvTable } from "../table/tsvImporter";
+import { importTsvTable, looksLikeTsvTable } from "../table/tsvImporter";
 import { confirmDialog } from "../ui/confirmDialog";
 import { t } from "../i18n";
 
@@ -457,6 +457,20 @@ export function importModelNoSelection(
 export interface ClipboardPayload {
   html?: string;
   text?: string;
+}
+
+/**
+ * Synchronous "is this clipboard a table?" check for paste interceptors —
+ * runs BEFORE any `preventDefault()`. Only a rich HTML table or a
+ * rectangular TSV grid (the Excel/WPS signature) counts; anything else
+ * (prose, code, single columns) keeps the native paste flow untouched, so
+ * Obsidian core and other plugins always see non-table pastes.
+ */
+export function clipboardLooksLikeTable(data: DataTransfer): boolean {
+  const html = data.getData("text/html");
+  if (html && importHtmlTable(html)) return true;
+  const text = data.getData("text/plain");
+  return !!text && looksLikeTsvTable(text);
 }
 
 /**

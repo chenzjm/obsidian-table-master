@@ -153,10 +153,28 @@ describe("handleEditorPaste single-execution paths", () => {
     });
     const plugin = makePlugin();
     const editor = new MockEditor(TABLE_DOC, { line: 2, ch: 2 });
-    // No HTML on the event (macOS Excel) → async recovery path.
-    plugin["handleEditorPaste"](fakeEvent({ text: "测试\n测试1" }), editor as never);
+    // No HTML on the event (macOS Excel) → async recovery path. The text is
+    // a rectangular TSV grid, which is what the synchronous gate requires.
+    plugin["handleEditorPaste"](fakeEvent({ text: "测试\t列\n测试1\t列" }), editor as never);
     await new Promise((r) => setTimeout(r, 10)); // settle the full async chain
     expect(editor.writes).toBe(1);
+  });
+
+  it("no selection + non-table text clipboard → native paste, zero writes (review fix)", async () => {
+    // Plain multi-line text without a tabular shape must NOT be intercepted
+    // and re-simulated: the default paste flow stays untouched.
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { clipboard: { read: vi.fn().mockResolvedValue([]) } },
+    });
+    const plugin = makePlugin();
+    const editor = new MockEditor(TABLE_DOC, { line: 2, ch: 2 });
+    const evt = fakeEvent({ text: "测试\n测试1" }); // single-column → prose, not a grid
+    plugin["handleEditorPaste"](evt, editor as never);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(evt.defaultPrevented).toBe(false); // native paste keeps control
+    expect(editor.writes).toBe(0);
+    expect(editor.text()).toBe(TABLE_DOC.join("\n"));
   });
 });
 

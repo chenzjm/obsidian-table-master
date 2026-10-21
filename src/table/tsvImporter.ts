@@ -6,6 +6,24 @@
 
 import { Align, Cell, TableModel, makeAnchor } from "./model";
 
+/**
+ * Synchronous, conservative "is this a spreadsheet range?" check for the
+ * paste interceptors. A paste handler must decide synchronously whether to
+ * `preventDefault()`, so the only evidence available right now is the plain
+ * text: real Excel/WPS ranges arrive as a rectangular TSV grid (every row
+ * has the same ≥2 tab-separated cells). Anything else — prose, code with
+ * tab indentation (ragged columns), single-column lists, single lines —
+ * fails the check and keeps the native paste flow untouched.
+ */
+export function looksLikeTsvTable(tsv: string): boolean {
+  const text = tsv.replace(/\r\n?/g, "\n");
+  if (!text.trim()) return false;
+  const rows = parseRows(text);
+  if (rows.length < 2) return false;
+  const cols = rows[0].length;
+  return cols >= 2 && rows.every((row) => row.length === cols);
+}
+
 /** Try to parse a TSV string into a TableModel. Returns null when it doesn't
  *  look tabular (no tabs anywhere, no useful row separation). */
 export function importTsvTable(tsv: string): TableModel | null {

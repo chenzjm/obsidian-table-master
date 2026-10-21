@@ -574,18 +574,23 @@ describe("Live Preview widget paste — end to end (DOM events)", () => {
     expect(results).toHaveLength(0);
   });
 
-  it("non-table clipboard → default text paste, cache not leaked to next paste", async () => {
+  it("non-table clipboard → native paste (no takeover, no simulated insert); cache consumed, not leaked", async () => {
     dragSelect(doc, win, cellA, cellF);
     firePaste(doc, doc.body, { text: "plain words" });
     await new Promise((r) => setTimeout(r, 10));
-    expect(editor.lastReplaced).toBe("plain words");
+    // Review fix: a non-table clipboard is NEVER taken over — no
+    // preventDefault, no simulated defaultTextInsert. The drag cache is
+    // still consumed (take() runs before the table gate), so nothing leaks
+    // into the next paste.
+    expect(editor.lastReplaced).toBe("");
+    expect(editor.writes).toBe(0);
     // The first paste destroyed the selection (widget rebuilds in the real
     // app); a follow-up table paste has no stale selection → the interceptor
     // stands down and the editor-paste handler owns it (not simulated here).
     win.getSelection()?.removeAllRanges();
     firePaste(doc, doc.body, { html: EXCEL_HTML });
     await new Promise((r) => setTimeout(r, 10));
-    expect(editor.writes).toBe(1); // only the first (text) insert
+    expect(editor.writes).toBe(0); // no stale selection → still no write
   });
 
   it("selection spanning two tables → blocked with a notice, document untouched", async () => {

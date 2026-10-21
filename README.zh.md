@@ -88,16 +88,22 @@ Live Preview 采用轻量方式仅修改 `rowspan` / `colspan` 属性并隐藏�
 
 **选区感知的范围粘贴**（本分支新增）：先在表格内框选一片单元格区域再执行命令，剪贴板内容只会贴入选区，行为对齐 WPS/Excel 的区域粘贴：
 
-| 场景 | 行为 |
-| --- | --- |
-| 剪贴板不大于选区 | 只覆盖选区左上角对应部分，其余选区原样保留 |
-| 剪贴板大于选区（单格选区） | 静默扩表（在表格末尾按需补行 / 补列） |
-| 剪贴板大于选区（多格选区） | 弹窗确认后从选区左上角贴入并扩表 |
-| 选区跨表 / 出表 / 覆盖表头分隔行或标题行 | Notice 拦截提示 |
-| 合并单元格被贴入区域完整覆盖 | 自动摊平后覆盖 |
-| 合并单元格与区域部分重叠 | 拦截（同 Excel「无法更改合并单元格的一部分」） |
+| 场景                      | 行为                         |
+| ----------------------- | -------------------------- |
+| 剪贴板不大于选区                | 只覆盖选区左上角对应部分，其余选区原样保留      |
+| 剪贴板大于选区（单格选区）           | 静默扩表（在表格末尾按需补行 / 补列）       |
+| 剪贴板大于选区（多格选区）           | 弹窗确认后从选区左上角贴入并扩表           |
+| 选区跨表 / 出表 / 覆盖表头分隔行或标题行 | Notice 拦截提示                |
+| 合并单元格被贴入区域完整覆盖          | 自动摊平后覆盖                    |
+| 合并单元格与区域部分重叠            | 拦截（同 Excel「无法更改合并单元格的一部分」） |
 
 表头行可以被贴入；粘贴后光标落在区域左上角单元格，整个粘贴是单步撤销。
+
+**v0.3.0 行为修正**（合并前评审意见）：
+
+1. **插件版本升级** 0.2.1 → 0.3.0（manifest.json / package.json / versions.json 同步）。
+2. **移除全局表头样式覆盖**：不再修改 Vault 中所有 Markdown 表格的 `th` 字重，表头回归 Obsidian 原生渲染；样式仅作用于插件自身渲染的表格（`table.tm-rendered` / `table.tm-grid`）。
+3. **确认表格后才接管粘贴**：粘贴拦截器在 `preventDefault()` 之前必须同步确认剪贴板确实是表格（富 HTML `<table>`，或 Excel/WPS 特征的**矩形 TSV 网格**——≥2 行、每行列数一致且 ≥2 列）。普通文本、代码等非表格剪贴板 100% 走 Obsidian 原生粘贴流程，不再被拦截后自行模拟插入，其他插件与核心粘贴管线不受影响。
 
 ## 安装
 
@@ -124,30 +130,30 @@ esbuild 会监听 `src/` 并实时重新生成 `main.js`。配合 [hot-reload](h
 
 每个动作都注册成命令，可以在 **设置 → 快捷键** 里绑定热键。
 
-| ID                       | 功能                                |
-| ------------------------ | ----------------------------------- |
-| `insert-row-above`       | 在上方插入行                        |
-| `insert-row-below`       | 在下方插入行                        |
-| `insert-col-left`        | 在左侧插入列                        |
-| `insert-col-right`       | 在右侧插入列                        |
-| `delete-row`             | 删除行                              |
-| `delete-col`             | 删除列                              |
-| `move-row-up`            | 上移行                              |
-| `move-row-down`          | 下移行                              |
-| `move-col-left`          | 左移列                              |
-| `move-col-right`         | 右移列                              |
-| `align-left/center/right/none` | 列对齐                       |
-| `merge-up`               | 与上方单元格合并                    |
-| `merge-down`             | 与下方单元格合并                    |
-| `merge-left`             | 与左侧单元格合并                    |
-| `split-cell`             | 拆分合并单元格                      |
-| `format-table`           | 格式化（重新对齐列宽）              |
-| `sort-asc` / `sort-desc` | 按列升 / 降序排序                   |
-| `open-grid-editor`       | 在当前表格上打开网格编辑器          |
-| `design-new-table`       | 用网格编辑器设计新表格并插入        |
-| `toggle-floating-toolbar`| 显示 / 隐藏浮动工具栏               |
-| `new-table`              | 直接插入空表格                      |
-| `import-table-from-clipboard` | 从 Excel / 网页剪贴板导入表格       |
+| ID                             | 功能                  |
+| ------------------------------ | ------------------- |
+| `insert-row-above`             | 在上方插入行              |
+| `insert-row-below`             | 在下方插入行              |
+| `insert-col-left`              | 在左侧插入列              |
+| `insert-col-right`             | 在右侧插入列              |
+| `delete-row`                   | 删除行                 |
+| `delete-col`                   | 删除列                 |
+| `move-row-up`                  | 上移行                 |
+| `move-row-down`                | 下移行                 |
+| `move-col-left`                | 左移列                 |
+| `move-col-right`               | 右移列                 |
+| `align-left/center/right/none` | 列对齐                 |
+| `merge-up`                     | 与上方单元格合并            |
+| `merge-down`                   | 与下方单元格合并            |
+| `merge-left`                   | 与左侧单元格合并            |
+| `split-cell`                   | 拆分合并单元格             |
+| `format-table`                 | 格式化（重新对齐列宽）         |
+| `sort-asc` / `sort-desc`       | 按列升 / 降序排序          |
+| `open-grid-editor`             | 在当前表格上打开网格编辑器       |
+| `design-new-table`             | 用网格编辑器设计新表格并插入      |
+| `toggle-floating-toolbar`      | 显示 / 隐藏浮动工具栏        |
+| `new-table`                    | 直接插入空表格             |
+| `import-table-from-clipboard`  | 从 Excel / 网页剪贴板导入表格 |
 
 ## 设置
 

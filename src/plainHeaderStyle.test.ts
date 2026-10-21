@@ -1,7 +1,9 @@
-// Guard test: the plain (non-bold) header rendering is a fixed product
-// decision — Markdown table syntax requires a header row and Obsidian bolds
-// it, which misrepresents pasted spreadsheet data. This test pins the CSS
-// rule so a future refactor cannot silently drop it.
+// Guard test: the plugin must NOT restyle table headers outside its own
+// rendered DOM. A previous build shipped a global
+// `.markdown-* table th { font-weight: normal }` rule that leaked into every
+// Markdown table in the vault (API docs, DB schemas, design docs...) and
+// changed their semantics. Headers stay on Obsidian's native styling; only
+// plugin-owned surfaces (table.tm-rendered / table.tm-grid) may set weights.
 
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
@@ -9,14 +11,18 @@ import { resolve } from "node:path";
 
 const css = readFileSync(resolve(process.cwd(), "styles.css"), "utf8");
 
-describe("plain header style (fixed default)", () => {
-  it("renders th at normal weight in the source, reading and print views", () => {
-    expect(css).toMatch(/\.markdown-source-view\.mod-cm6 table th[\s\S]*?font-weight:\s*normal/);
-    expect(css).toMatch(/\.markdown-rendered table th[\s\S]*?font-weight:\s*normal/);
-    expect(css).toMatch(/\.markdown-preview-view table th[\s\S]*?font-weight:\s*normal/);
+describe("no global header restyle", () => {
+  it("does not touch th font-weight on vault-wide markdown tables", () => {
+    expect(css).not.toMatch(/\.markdown-source-view[^{]*table th/);
+    expect(css).not.toMatch(/\.markdown-rendered[^{]*table th/);
+    expect(css).not.toMatch(/\.markdown-preview-view[^{]*table th/);
+    expect(css).not.toMatch(/\.print[^{]*table th/);
   });
 
-  it("is not gated behind a class or setting", () => {
-    expect(css).not.toMatch(/tm-plain-header/);
+  it("keeps header weights scoped to plugin-owned tables only", () => {
+    const weighted = css.match(/[^{}]*\bth\b[^{]*\{[^}]*font-weight[^}]*\}/g) ?? [];
+    for (const rule of weighted) {
+      expect(rule).toMatch(/table\.(tm-rendered|tm-grid)/);
+    }
   });
 });
